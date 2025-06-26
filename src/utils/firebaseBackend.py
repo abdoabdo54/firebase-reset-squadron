@@ -1,4 +1,3 @@
-
 """
 Enhanced FastAPI Backend Service for Firebase Operations with Multi-Project Parallelism
 Run this with: python src/utils/firebaseBackend.py
@@ -530,6 +529,66 @@ async def get_project_daily_count(project_id: str):
 async def get_all_daily_counts():
     """Get all daily counts"""
     return {"daily_counts": daily_counts}
+
+# Add lightning mode endpoint
+@app.post("/lightning/send-batch")
+async def lightning_send_batch(request: dict):
+    """Ultra-fast batch sending with no status checks or delays"""
+    try:
+        project_id = request.get('projectId')
+        user_ids = request.get('userIds', [])
+        lightning = request.get('lightning', False)
+        
+        if project_id not in pyrebase_apps or project_id not in firebase_apps:
+            return {"success": False, "error": "Project not found"}
+        
+        pyrebase_auth = pyrebase_apps[project_id].auth()
+        admin_app = firebase_apps[project_id]
+        
+        # Get emails in one batch call
+        user_emails = {}
+        try:
+            for uid in user_ids:
+                try:
+                    user = auth.get_user(uid, app=admin_app)
+                    if user.email:
+                        user_emails[uid] = user.email
+                except:
+                    continue
+        except:
+            pass
+        
+        # LIGHTNING MODE - Fire all emails simultaneously
+        if lightning:
+            async def fire_email(email: str):
+                try:
+                    pyrebase_auth.send_password_reset_email(email)
+                    increment_daily_count(project_id)
+                except:
+                    pass  # Ignore errors in lightning mode
+            
+            # Fire all emails at once - no waiting
+            tasks = [fire_email(email) for email in user_emails.values()]
+            # Don't await - let them fire asynchronously
+            asyncio.gather(*tasks, return_exceptions=True)
+            
+            return {"success": True, "fired": len(user_emails)}
+        
+        # Regular mode (keep existing logic)
+        sent = 0
+        for uid, email in user_emails.items():
+            try:
+                pyrebase_auth.send_password_reset_email(email)
+                sent += 1
+                increment_daily_count(project_id)
+            except Exception as e:
+                logger.error(f"Failed to send to {email}: {str(e)}")
+        
+        return {"success": True, "sent": sent}
+        
+    except Exception as e:
+        logger.error(f"Lightning batch failed: {str(e)}")
+        return {"success": False, "error": str(e)}
 
 if __name__ == "__main__":
     import uvicorn

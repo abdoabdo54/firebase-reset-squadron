@@ -1,6 +1,7 @@
-
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useToast } from '@/hooks/use-toast';
+import { Profile, localStorageService, StoredProject } from '@/services/LocalStorageService';
+import { LightningCampaignService } from '@/services/LightningCampaignService';
 
 // Types
 export interface User {
@@ -76,6 +77,20 @@ interface EnhancedAppContextType {
   // Loading states
   loading: boolean;
   setLoading: (loading: boolean) => void;
+  
+  // Profiles
+  profiles: Profile[];
+  activeProfile?: string;
+  setActiveProfile: (profileId: string) => void;
+  addProfile: (profile: Omit<Profile, 'id' | 'createdAt'>) => void;
+  removeProfile: (profileId: string) => void;
+  
+  // Lightning mode
+  startLightningCampaign: (campaignId: string) => Promise<void>;
+  isLightningMode: boolean;
+  
+  // Individual user deletion
+  deleteUser: (projectId: string, userId: string) => Promise<void>;
 }
 
 const EnhancedAppContext = createContext<EnhancedAppContextType | undefined>(undefined);
@@ -91,22 +106,47 @@ export const EnhancedAppProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [currentCampaign, setCurrentCampaign] = useState<Campaign | null>(null);
   const [dailyCounts, setDailyCounts] = useState<{ [key: string]: DailyCount }>({});
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [activeProfile, setActiveProfileState] = useState<string | undefined>();
+  const [isLightningMode, setIsLightningMode] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // Initialize
+  // Initialize with local storage
   useEffect(() => {
+    const data = localStorageService.loadData();
+    setProfiles(data.profiles);
+    setProjects(data.projects.map(p => ({
+      ...p,
+      status: 'loading' as const
+    })));
+    
+    if (data.activeProfile) {
+      setActiveProfileState(data.activeProfile);
+    } else if (data.profiles.length > 0) {
+      setActiveProfileState(data.profiles[0].id);
+    }
+    
     loadCampaigns();
     loadDailyCounts();
-    
-    // Set up polling for active campaigns
-    const interval = setInterval(() => {
-      if (currentCampaign && currentCampaign.status === 'running') {
-        updateCampaignProgress(currentCampaign.id);
-      }
-    }, 2000);
-    
-    return () => clearInterval(interval);
-  }, [currentCampaign]);
+  }, []);
+
+  // Save to localStorage whenever data changes
+  useEffect(() => {
+    const data = localStorageService.loadData();
+    data.profiles = profiles;
+    data.projects = projects.map(p => ({
+      id: p.id,
+      name: p.name,
+      adminEmail: p.adminEmail,
+      apiKey: p.apiKey,
+      serviceAccount: p.serviceAccount,
+      status: p.status,
+      createdAt: p.createdAt,
+      profileId: p.profileId,
+    }));
+    data.activeProfile = activeProfile;
+    localStorageService.saveData(data);
+  }, [profiles, projects, activeProfile]);
 
   // API helpers
   const apiCall = async (endpoint: string, options: RequestInit = {}) => {
@@ -426,6 +466,92 @@ export const EnhancedAppProvider: React.FC<{ children: React.ReactNode }> = ({ c
     return dailyCounts[key]?.sent || 0;
   };
 
+  // Profile management
+  const setActiveProfile = (profileId: string) => {
+    setActiveProfileState(profileId);
+  };
+
+  const addProfile = (profileData: Omit<Profile, 'id' | 'createdAt'>) => {
+    const newProfile: Profile = {
+      ...profileData,
+      id: Date.now().toString(),
+      createdAt: new Date().toISOString(),
+      projectIds: [],
+    };
+    setProfiles(prev => [...prev, newProfile]);
+  };
+
+  const removeProfile = (profileId: string) => {
+    setProfiles(prev => prev.filter(p => p.id !== profileId));
+    // Remove profile from projects
+    setProjects(prev => prev.map(p => 
+      p.profileId === profileId ? { ...p, profileId: undefined } : p
+    ));
+  };
+
+  // Individual user deletion
+  const deleteUser = async (projectId: string, userId: string) => {
+    try {
+      await apiCall(`/projects/${projectId}/users/${userId}`, { method: 'DELETE' });
+      
+      // Reload users for this project
+      await loadUsers(projectId);
+      
+      toast({
+        title: "User Deleted",
+        description: "User has been deleted successfully.",
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to delete user.",
+        variant: "destructive",
+      });
+      throw error;
+    }
+  };
+
+  // Lightning campaign
+  const startLightningCampaign = async (campaignId: string) => {
+    try {
+      const campaign = campaigns.find(c => c.id === campaignId);
+      if (!campaign) throw new Error('Campaign not found');
+
+      setIsLightningMode(true);
+      
+      const lightningService = LightningCampaignService.getInstance();
+      
+      await lightningService.executeLightningCampaign({
+        projectIds: campaign.projectIds,
+        selectedUsers: campaign.selectedUsers,
+        workers: campaign.workers,
+        batchSize: campaign.batchSize,
+        maxConcurrency: 100, // Maximum parallelism
+      }, (stats) => {
+        // Update campaign progress in real-time
+        setCampaigns(prev => prev.map(c => 
+          c.id === campaignId 
+            ? { ...c, processed: stats.sent, projectStats: stats.projectStats }
+            : c
+        ));
+      });
+
+      toast({
+        title: "Lightning Campaign Fired! ⚡",
+        description: "All emails have been fired at maximum speed. Firebase is processing them now.",
+      });
+      
+    } catch (error) {
+      toast({
+        title: "Lightning Campaign Failed",
+        description: error instanceof Error ? error.message : "Failed to execute lightning campaign",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLightningMode(false);
+    }
+  };
+
   const value: EnhancedAppContextType = {
     // Projects
     projects,
@@ -455,6 +581,20 @@ export const EnhancedAppProvider: React.FC<{ children: React.ReactNode }> = ({ c
     // Loading
     loading,
     setLoading,
+    
+    // Profiles
+    profiles,
+    activeProfile,
+    setActiveProfile,
+    addProfile,
+    removeProfile,
+    
+    // Lightning mode
+    startLightningCampaign,
+    isLightningMode,
+    
+    // Individual user deletion
+    deleteUser,
   };
 
   return (
