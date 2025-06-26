@@ -1,7 +1,6 @@
-
 import { useState } from 'react';
 import { useEnhancedApp } from '@/contexts/EnhancedAppContext';
-import { Send, Play, Users, Settings, Activity, Pause, Edit, Trash2, Plus, BarChart3 } from 'lucide-react';
+import { Send, Play, Users, Settings, Activity, Pause, Edit, Trash2, Plus, BarChart3, Zap, FolderOpen } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { EnhancedCampaignMonitor } from './EnhancedCampaignMonitor';
 
@@ -22,12 +22,18 @@ export const EnhancedCampaignsPage = () => {
     updateCampaign, 
     deleteCampaign, 
     startCampaign,
-    getDailyCount 
+    startLightningCampaign,
+    isLightningMode,
+    getDailyCount,
+    profiles,
+    activeProfile,
+    setActiveProfile
   } = useEnhancedApp();
   const { toast } = useToast();
   
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [editingCampaign, setEditingCampaign] = useState<string | null>(null);
+  const [selectedProfile, setSelectedProfile] = useState<string>('');
   const [selectedProjects, setSelectedProjects] = useState<Set<string>>(new Set());
   const [selectedUsers, setSelectedUsers] = useState<{ [projectId: string]: Set<string> }>({});
   const [campaignName, setCampaignName] = useState('');
@@ -35,7 +41,13 @@ export const EnhancedCampaignsPage = () => {
   const [batchSize, setBatchSize] = useState(100);
   const [template, setTemplate] = useState('');
 
+  // Filter projects by selected profile for campaign creation
+  const availableProjects = selectedProfile 
+    ? projects.filter(p => p.profileId === selectedProfile && p.status === 'active')
+    : projects.filter(p => p.status === 'active');
+
   const resetForm = () => {
+    setSelectedProfile('');
     setSelectedProjects(new Set());
     setSelectedUsers({});
     setCampaignName('');
@@ -43,6 +55,12 @@ export const EnhancedCampaignsPage = () => {
     setBatchSize(100);
     setTemplate('');
     setEditingCampaign(null);
+  };
+
+  const handleProfileSelect = (profileId: string) => {
+    setSelectedProfile(profileId);
+    setSelectedProjects(new Set());
+    setSelectedUsers({});
   };
 
   const handleProjectSelect = (projectId: string, checked: boolean) => {
@@ -178,6 +196,14 @@ export const EnhancedCampaignsPage = () => {
     }
   };
 
+  const handleLightningCampaign = async (campaignId: string) => {
+    try {
+      await startLightningCampaign(campaignId);
+    } catch (error) {
+      console.error('Failed to start lightning campaign:', error);
+    }
+  };
+
   const loadCampaignForEdit = (campaign: any) => {
     setCampaignName(campaign.name);
     setWorkers(campaign.workers);
@@ -262,6 +288,26 @@ export const EnhancedCampaignsPage = () => {
               </div>
             </div>
 
+            {/* Profile Selection */}
+            <div>
+              <Label className="text-gray-300">Select Profile</Label>
+              <Select value={selectedProfile} onValueChange={handleProfileSelect}>
+                <SelectTrigger className="bg-gray-700 border-gray-600 text-white">
+                  <SelectValue placeholder="Choose a profile to filter projects" />
+                </SelectTrigger>
+                <SelectContent className="bg-gray-700 border-gray-600">
+                  {profiles.map((profile) => (
+                    <SelectItem key={profile.id} value={profile.id} className="text-white hover:bg-gray-600">
+                      <div className="flex items-center gap-2">
+                        <FolderOpen className="w-4 h-4 text-blue-400" />
+                        {profile.name}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
             {/* Advanced Settings */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div>
@@ -305,118 +351,92 @@ export const EnhancedCampaignsPage = () => {
             </div>
 
             {/* Project & User Selection */}
-            <div>
-              <Label className="text-gray-300 text-lg font-semibold">Select Projects & Users</Label>
-              <p className="text-gray-500 text-sm mb-4">
-                All selected projects will process users in parallel for maximum efficiency
-              </p>
-              <div className="space-y-4">
-                {projects.filter(p => p.status === 'active').map((project) => {
-                  const activeUsers = getActiveUsers(project.id);
-                  const selectedCount = selectedUsers[project.id]?.size || 0;
-                  const dailyCount = getDailyCount(project.id);
-                  
-                  return (
-                    <Card key={project.id} className="bg-gray-700 border-gray-600">
-                      <CardHeader className="pb-3">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-3">
-                            <Checkbox
-                              checked={selectedProjects.has(project.id)}
-                              onCheckedChange={(checked) => handleProjectSelect(project.id, checked as boolean)}
-                            />
-                            <div>
-                              <h4 className="text-white font-medium">{project.name}</h4>
-                              <p className="text-gray-400 text-sm">{project.adminEmail}</p>
+            {selectedProfile && (
+              <div>
+                <Label className="text-gray-300 text-lg font-semibold">Select Projects & Users</Label>
+                <p className="text-gray-500 text-sm mb-4">
+                  Projects from profile: <span className="text-blue-400">{profiles.find(p => p.id === selectedProfile)?.name}</span>
+                </p>
+                <div className="space-y-4">
+                  {availableProjects.map((project) => {
+                    const activeUsers = getActiveUsers(project.id);
+                    const selectedCount = selectedUsers[project.id]?.size || 0;
+                    const dailyCount = getDailyCount(project.id);
+                    
+                    return (
+                      <Card key={project.id} className="bg-gray-700 border-gray-600">
+                        <CardHeader className="pb-3">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                              <Checkbox
+                                checked={selectedProjects.has(project.id)}
+                                onCheckedChange={(checked) => handleProjectSelect(project.id, checked as boolean)}
+                              />
+                              <div>
+                                <h4 className="text-white font-medium">{project.name}</h4>
+                                <p className="text-gray-400 text-sm">{project.adminEmail}</p>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-white text-sm font-medium">
+                                {activeUsers.length} active users
+                              </p>
+                              <p className="text-blue-400 text-xs">
+                                {dailyCount} sent today
+                              </p>
+                              {selectedCount > 0 && (
+                                <p className="text-green-400 text-xs">
+                                  {selectedCount} selected
+                                </p>
+                              )}
                             </div>
                           </div>
-                          <div className="text-right">
-                            <p className="text-white text-sm font-medium">
-                              {activeUsers.length} active users
-                            </p>
-                            <p className="text-blue-400 text-xs">
-                              {dailyCount} sent today
-                            </p>
-                            {selectedCount > 0 && (
-                              <p className="text-green-400 text-xs">
-                                {selectedCount} selected
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                      </CardHeader>
-                      
-                      {selectedProjects.has(project.id) && activeUsers.length > 0 && (
-                        <CardContent className="pt-0">
-                          <div className="flex justify-between items-center mb-3">
-                            <span className="text-gray-300 text-sm">
-                              Available Users ({activeUsers.length})
-                            </span>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleSelectAllUsers(project.id)}
-                              className="border-gray-600 text-gray-300 hover:bg-gray-600"
-                            >
-                              {selectedCount === activeUsers.length ? 'Deselect All' : 'Select All'}
-                            </Button>
-                          </div>
-                          <div className="max-h-40 overflow-y-auto space-y-2">
-                            {activeUsers.slice(0, 50).map((user) => (
-                              <div key={user.uid} className="flex items-center gap-2">
-                                <Checkbox
-                                  checked={selectedUsers[project.id]?.has(user.uid) || false}
-                                  onCheckedChange={(checked) => handleUserSelect(project.id, user.uid, checked as boolean)}
-                                />
-                                <div className="flex-1 min-w-0">
-                                  <span className="text-white text-sm truncate block">{user.email}</span>
-                                  {user.displayName && (
-                                    <span className="text-gray-400 text-xs">{user.displayName}</span>
+                        </CardHeader>
+                        
+                        {selectedProjects.has(project.id) && activeUsers.length > 0 && (
+                          <CardContent className="pt-0">
+                            <div className="flex justify-between items-center mb-3">
+                              <span className="text-gray-300 text-sm">
+                                Available Users ({activeUsers.length})
+                              </span>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleSelectAllUsers(project.id)}
+                                className="border-gray-600 text-gray-300 hover:bg-gray-600"
+                              >
+                                {selectedCount === activeUsers.length ? 'Deselect All' : 'Select All'}
+                              </Button>
+                            </div>
+                            <div className="max-h-40 overflow-y-auto space-y-2">
+                              {activeUsers.slice(0, 50).map((user) => (
+                                <div key={user.uid} className="flex items-center gap-2">
+                                  <Checkbox
+                                    checked={selectedUsers[project.id]?.has(user.uid) || false}
+                                    onCheckedChange={(checked) => handleUserSelect(project.id, user.uid, checked as boolean)}
+                                  />
+                                  <div className="flex-1 min-w-0">
+                                    <span className="text-white text-sm truncate block">{user.email}</span>
+                                    {user.displayName && (
+                                      <span className="text-gray-400 text-xs">{user.displayName}</span>
+                                    )}
+                                  </div>
+                                  {user.emailVerified && (
+                                    <span className="text-green-400 text-xs">✓</span>
                                   )}
                                 </div>
-                                {user.emailVerified && (
-                                  <span className="text-green-400 text-xs">✓</span>
-                                )}
-                              </div>
-                            ))}
-                            {activeUsers.length > 50 && (
-                              <p className="text-gray-500 text-xs text-center py-2">
-                                ... and {activeUsers.length - 50} more users
-                              </p>
-                            )}
-                          </div>
-                        </CardContent>
-                      )}
-                    </Card>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Campaign Summary */}
-            {getTotalSelectedUsers() > 0 && (
-              <div className="bg-gradient-to-r from-blue-900/20 to-purple-900/20 border border-blue-500/30 p-4 rounded-lg">
-                <h4 className="text-blue-300 font-medium mb-2 flex items-center gap-2">
-                  <BarChart3 className="w-4 h-4" />
-                  Multi-Project Campaign Summary
-                </h4>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                  <div>
-                    <p className="text-gray-400">Total Users</p>
-                    <p className="text-white font-medium text-lg">{getTotalSelectedUsers()}</p>
-                  </div>
-                  <div>
-                    <p className="text-gray-400">Projects</p>
-                    <p className="text-white font-medium text-lg">{selectedProjects.size}</p>
-                  </div>
-                  <div>
-                    <p className="text-gray-400">Parallel Workers</p>
-                    <p className="text-white font-medium text-lg">{workers * selectedProjects.size}</p>
-                  </div>
-                  <div>
-                    <p className="text-gray-400">Est. Time</p>
-                    <p className="text-white font-medium text-lg">~{getEstimatedDuration()} min</p>
-                  </div>
+                              ))}
+                              {activeUsers.length > 50 && (
+                                <p className="text-gray-500 text-xs text-center py-2">
+                                  ... and {activeUsers.length - 50} more users
+                                </p>
+                              )}
+                            </div>
+                          </CardContent>
+                        )}
+                      </Card>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -499,58 +519,28 @@ export const EnhancedCampaignsPage = () => {
                       </div>
                     )}
 
-                    {/* Campaign Stats */}
-                    <div className="grid grid-cols-2 gap-4 text-sm mb-4">
-                      <div>
-                        <p className="text-gray-400">Workers</p>
-                        <p className="text-white font-medium">{campaign.workers * campaign.projectIds.length}</p>
-                      </div>
-                      <div>
-                        <p className="text-gray-400">Batch Size</p>
-                        <p className="text-white font-medium">{campaign.batchSize}</p>
-                      </div>
-                    </div>
-
-                    {/* Project Stats */}
-                    {Object.keys(campaign.projectStats).length > 0 && (
-                      <div className="mb-4">
-                        <p className="text-gray-400 text-xs mb-2">Per-project progress:</p>
-                        <div className="space-y-1">
-                          {Object.entries(campaign.projectStats).map(([projectId, stats]) => {
-                            const project = projects.find(p => p.id === projectId);
-                            return (
-                              <div key={projectId} className="flex justify-between text-xs">
-                                <span className="text-gray-300">{project?.name || projectId}</span>
-                                <span className="text-white">{stats.successful}/{stats.processed}</span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-
                     {/* Action Buttons */}
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 flex-wrap">
                       {campaign.status === 'pending' && (
-                        <Button
-                          size="sm"
-                          onClick={() => handleStartCampaign(campaign.id)}
-                          className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800"
-                        >
-                          <Play className="w-3 h-3 mr-1" />
-                          Start
-                        </Button>
-                      )}
-                      {campaign.status === 'pending' && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => loadCampaignForEdit(campaign)}
-                          className="border-gray-600 text-gray-300 hover:bg-gray-700"
-                        >
-                          <Edit className="w-3 h-3 mr-1" />
-                          Edit
-                        </Button>
+                        <>
+                          <Button
+                            size="sm"
+                            onClick={() => handleStartCampaign(campaign.id)}
+                            className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800"
+                          >
+                            <Play className="w-3 h-3 mr-1" />
+                            Start
+                          </Button>
+                          <Button
+                            size="sm"
+                            onClick={() => handleLightningCampaign(campaign.id)}
+                            disabled={isLightningMode}
+                            className="bg-gradient-to-r from-yellow-600 to-orange-600 hover:from-yellow-700 hover:to-orange-700"
+                          >
+                            <Zap className="w-3 h-3 mr-1" />
+                            Lightning⚡
+                          </Button>
+                        </>
                       )}
                       {campaign.status !== 'running' && (
                         <Button

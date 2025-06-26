@@ -129,6 +129,11 @@ export const EnhancedAppProvider: React.FC<{ children: React.ReactNode }> = ({ c
     
     loadCampaigns();
     loadDailyCounts();
+    
+    // Auto-save projects to backend
+    data.projects.forEach(project => {
+      saveProjectToBackend(project);
+    });
   }, []);
 
   // Save to localStorage whenever data changes
@@ -148,6 +153,25 @@ export const EnhancedAppProvider: React.FC<{ children: React.ReactNode }> = ({ c
     data.activeProfile = activeProfile;
     localStorageService.saveData(data);
   }, [profiles, projects, activeProfile]);
+
+  // Auto-save project to backend
+  const saveProjectToBackend = async (project: any) => {
+    try {
+      await apiCall('/projects', {
+        method: 'POST',
+        body: JSON.stringify({
+          id: project.id,
+          name: project.name,
+          adminEmail: project.adminEmail,
+          apiKey: project.apiKey,
+          serviceAccount: project.serviceAccount,
+        }),
+      });
+      console.log(`Project ${project.name} auto-saved to backend`);
+    } catch (error) {
+      console.error(`Failed to auto-save project ${project.name}:`, error);
+    }
+  };
 
   // API helpers
   const apiCall = async (endpoint: string, options: RequestInit = {}) => {
@@ -175,30 +199,27 @@ export const EnhancedAppProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const addProject = async (projectData: any) => {
     try {
       setLoading(true);
-      const response = await apiCall('/projects', {
-        method: 'POST',
-        body: JSON.stringify(projectData),
-      });
       
-      if (response.success) {
-        const newProject: Project = {
-          id: response.project_id,
-          name: projectData.name,
-          adminEmail: projectData.adminEmail,
-          apiKey: projectData.apiKey,
-          serviceAccount: projectData.serviceAccount,
-          status: 'active',
-          createdAt: new Date().toISOString(),
-          profileId: undefined,
-        };
-        
-        setProjects(prev => [...prev, newProject]);
-        
-        toast({
-          title: "Project Added",
-          description: `${projectData.name} has been added successfully.`,
-        });
-      }
+      const newProject: Project = {
+        id: projectData.id || Date.now().toString(),
+        name: projectData.name,
+        adminEmail: projectData.adminEmail,
+        apiKey: projectData.apiKey,
+        serviceAccount: projectData.serviceAccount,
+        status: 'active',
+        createdAt: new Date().toISOString(),
+        profileId: activeProfile,
+      };
+      
+      setProjects(prev => [...prev, newProject]);
+      
+      // Auto-save to backend
+      await saveProjectToBackend(newProject);
+      
+      toast({
+        title: "Project Added",
+        description: `${projectData.name} has been added successfully and saved to backend.`,
+      });
     } catch (error) {
       toast({
         title: "Error",
@@ -401,24 +422,43 @@ export const EnhancedAppProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
   const startCampaign = async (campaignId: string) => {
     try {
-      await apiCall(`/campaigns/${campaignId}/start`, { method: 'POST' });
+      const response = await apiCall(`/campaigns/${campaignId}/start`, { method: 'POST' });
       
-      // Update campaign status
-      setCampaigns(prev => prev.map(c => 
-        c.id === campaignId 
-          ? { ...c, status: 'running' as const, startedAt: new Date().toISOString() }
-          : c
-      ));
-      
-      const campaign = campaigns.find(c => c.id === campaignId);
-      if (campaign) {
-        setCurrentCampaign({ ...campaign, status: 'running', startedAt: new Date().toISOString() });
+      if (response.success) {
+        // Update campaign status
+        setCampaigns(prev => prev.map(c => 
+          c.id === campaignId 
+            ? { ...c, status: 'running' as const, startedAt: new Date().toISOString() }
+            : c
+        ));
+        
+        const campaign = campaigns.find(c => c.id === campaignId);
+        if (campaign) {
+          setCurrentCampaign({ ...campaign, status: 'running', startedAt: new Date().toISOString() });
+          
+          // Monitor campaign progress
+          const progressInterval = setInterval(async () => {
+            try {
+              const progressResponse = await apiCall(`/campaigns/${campaignId}`);
+              setCampaigns(prev => prev.map(c => c.id === campaignId ? progressResponse : c));
+              setCurrentCampaign(progressResponse);
+              
+              if (progressResponse.status === 'completed' || progressResponse.status === 'failed') {
+                clearInterval(progressInterval);
+                setCurrentCampaign(null);
+              }
+            } catch (error) {
+              console.error('Failed to update campaign progress:', error);
+              clearInterval(progressInterval);
+            }
+          }, 2000);
+        }
+        
+        toast({
+          title: "Campaign Started",
+          description: "Password reset campaign is now running across all selected projects.",
+        });
       }
-      
-      toast({
-        title: "Campaign Started",
-        description: "Password reset campaign is now running across all selected projects.",
-      });
     } catch (error) {
       toast({
         title: "Error",
@@ -496,8 +536,11 @@ export const EnhancedAppProvider: React.FC<{ children: React.ReactNode }> = ({ c
     try {
       await apiCall(`/projects/${projectId}/users/${userId}`, { method: 'DELETE' });
       
-      // Reload users for this project
-      await loadUsers(projectId);
+      // Update local state immediately
+      setUsers(prev => ({
+        ...prev,
+        [projectId]: (prev[projectId] || []).filter(user => user.uid !== userId)
+      }));
       
       toast({
         title: "User Deleted",
@@ -528,12 +571,21 @@ export const EnhancedAppProvider: React.FC<{ children: React.ReactNode }> = ({ c
         selectedUsers: campaign.selectedUsers,
         workers: campaign.workers,
         batchSize: campaign.batchSize,
-        maxConcurrency: 100, // Maximum parallelism
+        maxConcurrency: 1000, // Maximum parallelism for lightning mode
       }, (stats) => {
         // Update campaign progress in real-time
         setCampaigns(prev => prev.map(c => 
           c.id === campaignId 
-            ? { ...c, processed: stats.sent, projectStats: stats.projectStats }
+            ? { 
+                ...c, 
+                processed: stats.sent, 
+                successful: stats.sent, 
+                failed: 0,
+                projectStats: stats.projectStats,
+                status: stats.sent >= Object.values(campaign.selectedUsers).reduce((sum, users) => sum + users.length, 0) 
+                  ? 'completed' as const 
+                  : 'running' as const
+              }
             : c
         ));
       });
