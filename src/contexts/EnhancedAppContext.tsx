@@ -21,6 +21,7 @@ export interface Project {
   serviceAccount: any;
   status: 'loading' | 'active' | 'error';
   createdAt: string;
+  profileId?: string;
 }
 
 export interface Campaign {
@@ -188,6 +189,7 @@ export const EnhancedAppProvider: React.FC<{ children: React.ReactNode }> = ({ c
           serviceAccount: projectData.serviceAccount,
           status: 'active',
           createdAt: new Date().toISOString(),
+          profileId: undefined,
         };
         
         setProjects(prev => [...prev, newProject]);
