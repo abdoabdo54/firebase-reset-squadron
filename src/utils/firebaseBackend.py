@@ -1,4 +1,3 @@
-
 """
 FastAPI Backend Service for Firebase Operations
 Run this with: python src/utils/firebaseBackend.py
@@ -74,31 +73,54 @@ async def add_project(project: ProjectCreate):
         if not project_id:
             raise HTTPException(status_code=400, detail="Invalid service account - missing project_id")
         
+        client_email = project.serviceAccount.get('client_email')
+        if not client_email:
+            raise HTTPException(status_code=400, detail="Invalid service account - missing client_email")
+        
         # Check if project already exists
         if project_id in firebase_apps:
             logger.warning(f"Project {project_id} already exists, removing old instance")
-            firebase_admin.delete_app(firebase_apps[project_id])
+            try:
+                firebase_admin.delete_app(firebase_apps[project_id])
+            except:
+                pass  # Ignore errors when deleting old app
             del firebase_apps[project_id]
         
         # Initialize Firebase Admin SDK
-        cred = credentials.Certificate(project.serviceAccount)
-        firebase_app = firebase_admin.initialize_app(cred, name=project_id)
-        firebase_apps[project_id] = firebase_app
+        try:
+            cred = credentials.Certificate(project.serviceAccount)
+            firebase_app = firebase_admin.initialize_app(cred, name=project_id)
+            firebase_apps[project_id] = firebase_app
+            logger.info(f"Firebase Admin SDK initialized for project {project_id}")
+        except Exception as e:
+            logger.error(f"Failed to initialize Firebase Admin SDK: {str(e)}")
+            raise HTTPException(status_code=400, detail=f"Invalid service account: {str(e)}")
         
         # Initialize Pyrebase for client operations
-        pyrebase_config = {
-            "apiKey": project.apiKey,
-            "authDomain": f"{project_id}.firebaseapp.com",
-            "databaseURL": f"https://{project_id}-default-rtdb.firebaseio.com",
-            "storageBucket": f"{project_id}.appspot.com",
-        }
-        
-        pyrebase_app = pyrebase.initialize_app(pyrebase_config)
-        pyrebase_apps[project_id] = pyrebase_app
+        try:
+            pyrebase_config = {
+                "apiKey": project.apiKey,
+                "authDomain": f"{project_id}.firebaseapp.com",
+                "databaseURL": f"https://{project_id}-default-rtdb.firebaseio.com",
+                "storageBucket": f"{project_id}.appspot.com",
+            }
+            
+            pyrebase_app = pyrebase.initialize_app(pyrebase_config)
+            pyrebase_apps[project_id] = pyrebase_app
+            logger.info(f"Pyrebase initialized for project {project_id}")
+        except Exception as e:
+            logger.error(f"Failed to initialize Pyrebase: {str(e)}")
+            # Clean up Firebase Admin if Pyrebase fails
+            if project_id in firebase_apps:
+                firebase_admin.delete_app(firebase_apps[project_id])
+                del firebase_apps[project_id]
+            raise HTTPException(status_code=400, detail=f"Invalid API key: {str(e)}")
         
         logger.info(f"Project {project_id} added successfully")
         return {"success": True, "project_id": project_id}
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to add project: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to add project: {str(e)}")
@@ -109,12 +131,19 @@ async def remove_project(project_id: str):
     try:
         logger.info(f"Removing project: {project_id}")
         
+        # Remove Firebase Admin app
         if project_id in firebase_apps:
-            firebase_admin.delete_app(firebase_apps[project_id])
+            try:
+                firebase_admin.delete_app(firebase_apps[project_id])
+                logger.info(f"Firebase Admin app deleted for {project_id}")
+            except Exception as e:
+                logger.warning(f"Error deleting Firebase Admin app: {str(e)}")
             del firebase_apps[project_id]
         
+        # Remove Pyrebase app
         if project_id in pyrebase_apps:
             del pyrebase_apps[project_id]
+            logger.info(f"Pyrebase app removed for {project_id}")
         
         logger.info(f"Project {project_id} removed successfully")
         return {"success": True}
@@ -135,25 +164,32 @@ async def load_users(project_id: str):
         app = firebase_apps[project_id]
         users = []
         
-        # List all users using Firebase Admin SDK
-        page = auth.list_users(app=app)
-        while page:
-            for user in page.users:
-                users.append({
-                    "uid": user.uid,
-                    "email": user.email or "",
-                    "displayName": user.display_name,
-                    "disabled": user.disabled,
-                    "emailVerified": user.email_verified,
-                    "createdAt": user.user_metadata.creation_timestamp.isoformat() if user.user_metadata.creation_timestamp else None,
-                })
-            
-            # Get next page
-            page = page.get_next_page() if page.has_next_page else None
+        # List all users using Firebase Admin SDK (matching your Python script)
+        try:
+            page = auth.list_users(app=app)
+            while page:
+                for user in page.users:
+                    users.append({
+                        "uid": user.uid,
+                        "email": user.email or "",
+                        "displayName": user.display_name,
+                        "disabled": user.disabled,
+                        "emailVerified": user.email_verified,
+                        "createdAt": user.user_metadata.creation_timestamp.isoformat() if user.user_metadata.creation_timestamp else None,
+                    })
+                
+                # Get next page
+                page = page.get_next_page() if page.has_next_page else None
+                
+        except Exception as e:
+            logger.error(f"Error listing users: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Failed to list users: {str(e)}")
         
         logger.info(f"Loaded {len(users)} users from project {project_id}")
         return {"users": users}
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to load users: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to load users: {str(e)}")
@@ -393,7 +429,12 @@ async def test_email_send(project_id: str, test_email: TestEmail):
 
 if __name__ == "__main__":
     import uvicorn
-    print("Starting Firebase Email Campaign Backend...")
-    print("Backend will be available at: http://localhost:8000")
-    print("API documentation: http://localhost:8000/docs")
+    print("🚀 Starting Firebase Email Campaign Backend...")
+    print("📍 Backend will be available at: http://localhost:8000")
+    print("📖 API documentation: http://localhost:8000/docs")
+    print("\n⚠️  Make sure to:")
+    print("1. Have your Firebase service account JSON files ready")
+    print("2. Get your Firebase Web API Keys from Firebase Console")
+    print("3. Add projects through the React app interface")
+    print("\n🔄 Starting server...")
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")

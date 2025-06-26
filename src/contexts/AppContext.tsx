@@ -122,19 +122,29 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const testConnection = async () => {
       try {
         console.log('Testing backend connection...');
-        await apiCall('/health');
-        console.log('Backend connection successful');
+        const response = await apiCall('/health');
+        console.log('Backend connection successful:', response);
       } catch (error) {
         console.error('Backend connection failed:', error);
+        console.error('Make sure the backend is running: python src/utils/firebaseBackend.py');
       }
     };
     testConnection();
   }, []);
 
   const addProject = async (projectData: Omit<FirebaseProject, 'id' | 'createdAt' | 'status'>) => {
+    console.log('Adding project with data:', projectData);
+    
+    // Validate service account
+    if (!projectData.serviceAccount?.project_id || !projectData.serviceAccount?.client_email) {
+      throw new Error('Invalid service account file - missing project_id or client_email');
+    }
+
+    const projectId = projectData.serviceAccount.project_id;
+    
     const newProject: FirebaseProject = {
       ...projectData,
-      id: projectData.serviceAccount?.project_id || Date.now().toString(),
+      id: projectId, // Use the actual Firebase project ID from service account
       createdAt: new Date().toISOString(),
       status: 'loading',
     };
@@ -142,7 +152,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setProjects(prev => [...prev, newProject]);
     
     try {
-      console.log('Adding project:', newProject.name);
+      console.log(`Adding Firebase project: ${newProject.name} (ID: ${projectId})`);
       
       // Make real API call to backend to add Firebase project
       const response = await apiCall('/projects', {
@@ -158,13 +168,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       console.log('Project added successfully:', response);
       
       setProjects(prev => prev.map(p => 
-        p.id === newProject.id ? { ...p, status: 'active' as const } : p
+        p.id === projectId ? { ...p, status: 'active' as const } : p
       ));
       
       // Initialize template for new project
       setTemplates(prev => ({
         ...prev,
-        [newProject.id]: `
+        [projectId]: `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f9f9f9;">
             <div style="background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
               <h2 style="color: #333; text-align: center; margin-bottom: 20px;">Reset Your Password</h2>
@@ -183,17 +193,30 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     } catch (error) {
       console.error('Error adding project:', error);
       setProjects(prev => prev.map(p => 
-        p.id === newProject.id ? { ...p, status: 'error' as const } : p
+        p.id === projectId ? { ...p, status: 'error' as const } : p
       ));
+      
+      // Provide more specific error messages
+      if (error instanceof Error) {
+        if (error.message.includes('404')) {
+          throw new Error('Backend server not found. Make sure to run: python src/utils/firebaseBackend.py');
+        } else if (error.message.includes('Failed to fetch')) {
+          throw new Error('Cannot connect to backend. Make sure the backend is running on http://localhost:8000');
+        }
+      }
       throw error;
     }
   };
 
   const removeProject = async (id: string) => {
     try {
+      console.log(`Removing project: ${id}`);
+      
       await apiCall(`/projects/${id}`, {
         method: 'DELETE',
       });
+      
+      console.log(`Project ${id} removed successfully`);
       
       setProjects(prev => prev.filter(p => p.id !== id));
       setUsers(prev => {
@@ -208,6 +231,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       });
     } catch (error) {
       console.error('Error removing project:', error);
+      if (error instanceof Error && error.message.includes('404')) {
+        throw new Error('Backend server not found. Make sure to run: python src/utils/firebaseBackend.py');
+      }
       throw error;
     }
   };

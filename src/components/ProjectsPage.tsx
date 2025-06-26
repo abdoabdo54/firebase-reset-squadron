@@ -12,6 +12,7 @@ export const ProjectsPage = () => {
   const { projects, addProject, removeProject } = useApp();
   const { toast } = useToast();
   const [showAddForm, setShowAddForm] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     adminEmail: '',
@@ -38,11 +39,16 @@ export const ProjectsPage = () => {
       return;
     }
 
+    setIsSubmitting(true);
     try {
       // Parse and validate the service account JSON
       const serviceAccountText = await formData.serviceAccount.text();
       const serviceAccount = JSON.parse(serviceAccountText);
       
+      if (!serviceAccount.project_id || !serviceAccount.client_email) {
+        throw new Error("Invalid service account file - missing required fields");
+      }
+
       await addProject({
         name: formData.name,
         adminEmail: formData.adminEmail,
@@ -58,25 +64,29 @@ export const ProjectsPage = () => {
         description: "Firebase project added successfully!",
       });
     } catch (error) {
+      console.error('Error adding project:', error);
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : "Failed to add project.",
+        description: error instanceof Error ? error.message : "Failed to add project. Make sure the backend is running.",
         variant: "destructive",
       });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const handleRemoveProject = async (id: string) => {
+  const handleRemoveProject = async (id: string, name: string) => {
     try {
       await removeProject(id);
       toast({
         title: "Project Removed",
-        description: "Firebase project has been removed successfully.",
+        description: `Firebase project "${name}" has been removed successfully.`,
       });
     } catch (error) {
+      console.error('Error removing project:', error);
       toast({
         title: "Error",
-        description: "Failed to remove project.",
+        description: "Failed to remove project. Make sure the backend is running.",
         variant: "destructive",
       });
     }
@@ -114,6 +124,7 @@ export const ProjectsPage = () => {
                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                     placeholder="My Firebase Project"
                     className="bg-gray-700 border-gray-600 text-white"
+                    disabled={isSubmitting}
                   />
                 </div>
                 <div>
@@ -125,6 +136,7 @@ export const ProjectsPage = () => {
                     onChange={(e) => setFormData({ ...formData, adminEmail: e.target.value })}
                     placeholder="admin@example.com"
                     className="bg-gray-700 border-gray-600 text-white"
+                    disabled={isSubmitting}
                   />
                 </div>
               </div>
@@ -137,6 +149,7 @@ export const ProjectsPage = () => {
                   onChange={(e) => setFormData({ ...formData, apiKey: e.target.value })}
                   placeholder="AIzaSyA..."
                   className="bg-gray-700 border-gray-600 text-white"
+                  disabled={isSubmitting}
                 />
                 <p className="text-xs text-gray-400 mt-1">
                   Find this in Firebase Console → Project Settings → General → Web API Key
@@ -152,12 +165,14 @@ export const ProjectsPage = () => {
                     accept=".json"
                     onChange={handleFileChange}
                     className="hidden"
+                    disabled={isSubmitting}
                   />
                   <Button
                     type="button"
                     variant="outline"
                     onClick={() => document.getElementById('serviceAccount')?.click()}
                     className="border-gray-600 text-gray-300 hover:bg-gray-700"
+                    disabled={isSubmitting}
                   >
                     <Upload className="w-4 h-4 mr-2" />
                     {formData.serviceAccount ? formData.serviceAccount.name : 'Upload JSON File'}
@@ -172,14 +187,16 @@ export const ProjectsPage = () => {
                 <Button
                   type="submit"
                   className="bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800"
+                  disabled={isSubmitting}
                 >
-                  Add Project
+                  {isSubmitting ? 'Adding...' : 'Add Project'}
                 </Button>
                 <Button
                   type="button"
                   variant="outline"
                   onClick={() => setShowAddForm(false)}
                   className="border-gray-600 text-gray-300 hover:bg-gray-700"
+                  disabled={isSubmitting}
                 >
                   Cancel
                 </Button>
@@ -190,8 +207,8 @@ export const ProjectsPage = () => {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {projects.map((project) => (
-          <Card key={project.id} className="bg-gray-800 border-gray-700 hover:bg-gray-750 transition-colors">
+        {projects.map((project, index) => (
+          <Card key={`${project.id}-${index}`} className="bg-gray-800 border-gray-700 hover:bg-gray-750 transition-colors">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-lg font-semibold text-white flex items-center gap-2">
                 <Server className="w-5 h-5 text-blue-500" />
@@ -205,7 +222,7 @@ export const ProjectsPage = () => {
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => handleRemoveProject(project.id)}
+                  onClick={() => handleRemoveProject(project.id, project.name)}
                   className="text-red-400 hover:text-red-300 hover:bg-red-900/20"
                 >
                   <Trash2 className="w-4 h-4" />
