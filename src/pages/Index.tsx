@@ -1,12 +1,12 @@
 
 import { useState } from 'react';
 import { Sidebar } from '@/components/Sidebar';
-import { Dashboard } from '@/components/Dashboard';
+import { EnhancedDashboard } from '@/components/EnhancedDashboard';
 import { ProjectsPage } from '@/components/ProjectsPage';
-import { UsersPage } from '@/components/UsersPage';
+import { EnhancedUsersPage } from '@/components/EnhancedUsersPage';
 import { TemplatesPage } from '@/components/TemplatesPage';
-import { CampaignsPage } from '@/components/CampaignsPage';
-import { AppProvider } from '@/contexts/AppContext';
+import { EnhancedCampaignsPage } from '@/components/EnhancedCampaignsPage';
+import { EnhancedAppProvider } from '@/contexts/EnhancedAppContext';
 
 const Index = () => {
   const [currentPage, setCurrentPage] = useState('dashboard');
@@ -14,29 +14,29 @@ const Index = () => {
   const renderPage = () => {
     switch (currentPage) {
       case 'dashboard':
-        return <Dashboard />;
+        return <EnhancedDashboard />;
       case 'projects':
         return <ProjectsPage />;
       case 'users':
-        return <UsersPage />;
+        return <EnhancedUsersPage />;
       case 'templates':
         return <TemplatesPage />;
       case 'campaigns':
-        return <CampaignsPage />;
+        return <EnhancedCampaignsPage />;
       default:
-        return <Dashboard />;
+        return <EnhancedDashboard />;
     }
   };
 
   return (
-    <AppProvider>
+    <EnhancedAppProvider>
       <div className="min-h-screen bg-gray-900 flex w-full">
         <Sidebar currentPage={currentPage} onPageChange={setCurrentPage} />
         <main className="flex-1 overflow-hidden">
           {renderPage()}
         </main>
       </div>
-    </AppProvider>
+    </EnhancedAppProvider>
   );
 };
 
