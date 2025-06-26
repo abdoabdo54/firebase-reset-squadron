@@ -1,13 +1,13 @@
 
 """
-FastAPI Backend Service for Firebase Operations
+Enhanced FastAPI Backend Service for Firebase Operations with Multi-Project Parallelism
 Run this with: python src/utils/firebaseBackend.py
 """
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Set
 import firebase_admin
 from firebase_admin import credentials, auth
 import pyrebase
@@ -16,28 +16,36 @@ import json
 import os
 import asyncio
 import time
-from datetime import datetime
+from datetime import datetime, date
 import logging
+import concurrent.futures
+import threading
+from collections import defaultdict
+import uuid
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Firebase Email Campaign Backend", version="1.0.0")
+app = FastAPI(title="Firebase Email Campaign Backend", version="2.0.0")
 
-# Enable CORS for frontend - More permissive for development
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for development
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
-# Global storage for Firebase apps and configs
+# Global storage
 firebase_apps = {}
 pyrebase_apps = {}
+active_campaigns = {}
+campaign_stats = {}
+daily_counts = {}
 
+# Data models
 class ProjectCreate(BaseModel):
     name: str
     adminEmail: str
@@ -46,45 +54,82 @@ class ProjectCreate(BaseModel):
 
 class UserImport(BaseModel):
     emails: List[str]
+    projectIds: List[str]
 
-class CampaignStart(BaseModel):
+class CampaignCreate(BaseModel):
+    name: str
     projectIds: List[str]
     selectedUsers: Dict[str, List[str]]
     batchSize: int
     workers: int
+    template: Optional[str] = None
 
-class TestEmail(BaseModel):
-    email: str
+class CampaignUpdate(BaseModel):
+    name: Optional[str] = None
+    batchSize: Optional[int] = None
+    workers: Optional[int] = None
+    template: Optional[str] = None
+
+class BulkUserDelete(BaseModel):
+    projectIds: List[str]
+    userIds: Optional[List[str]] = None  # If None, delete all users
+
+# Daily count management
+def load_daily_counts():
+    """Load daily counts from JSON file"""
+    global daily_counts
+    try:
+        if os.path.exists('daily_counts.json'):
+            with open('daily_counts.json', 'r') as f:
+                daily_counts = json.load(f)
+    except Exception as e:
+        logger.error(f"Error loading daily counts: {str(e)}")
+        daily_counts = {}
+
+def save_daily_counts():
+    """Save daily counts to JSON file"""
+    try:
+        with open('daily_counts.json', 'w') as f:
+            json.dump(daily_counts, f, indent=2)
+    except Exception as e:
+        logger.error(f"Error saving daily counts: {str(e)}")
+
+def increment_daily_count(project_id: str):
+    """Increment daily count for a project"""
+    today = date.today().isoformat()
+    key = f"{project_id}_{today}"
+    
+    if key not in daily_counts:
+        daily_counts[key] = {"project_id": project_id, "date": today, "sent": 0}
+    
+    daily_counts[key]["sent"] += 1
+    save_daily_counts()
+
+def get_daily_count(project_id: str) -> int:
+    """Get daily count for a project"""
+    today = date.today().isoformat()
+    key = f"{project_id}_{today}"
+    return daily_counts.get(key, {}).get("sent", 0)
+
+# Initialize daily counts on startup
+load_daily_counts()
 
 @app.get("/")
 async def root():
-    """Root endpoint"""
-    logger.info("Root endpoint accessed")
-    return {"message": "Firebase Email Campaign Backend API", "status": "running", "version": "1.0.0"}
+    return {"message": "Firebase Email Campaign Backend v2.0", "status": "running"}
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
-    logger.info("Health check endpoint accessed")
     return {
-        "status": "healthy", 
+        "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "message": "Backend is running successfully",
         "projects_connected": len(firebase_apps),
-        "available_endpoints": [
-            "GET /health",
-            "POST /projects",
-            "DELETE /projects/{project_id}",
-            "GET /projects/{project_id}/users",
-            "POST /projects/{project_id}/users/import",
-            "DELETE /projects/{project_id}/users",
-            "POST /projects/{project_id}/test-email"
-        ]
+        "active_campaigns": len(active_campaigns),
+        "version": "2.0.0"
     }
 
 @app.post("/projects")
 async def add_project(project: ProjectCreate):
-    """Add a new Firebase project"""
     try:
         logger.info(f"Adding project: {project.name}")
         
@@ -92,13 +137,8 @@ async def add_project(project: ProjectCreate):
         if not project_id:
             raise HTTPException(status_code=400, detail="Invalid service account - missing project_id")
         
-        client_email = project.serviceAccount.get('client_email')
-        if not client_email:
-            raise HTTPException(status_code=400, detail="Invalid service account - missing client_email")
-        
-        # Check if project already exists
+        # Remove existing project if it exists
         if project_id in firebase_apps:
-            logger.warning(f"Project {project_id} already exists, removing old instance")
             try:
                 firebase_admin.delete_app(firebase_apps[project_id])
             except Exception as e:
@@ -106,400 +146,402 @@ async def add_project(project: ProjectCreate):
             del firebase_apps[project_id]
         
         # Initialize Firebase Admin SDK
-        try:
-            cred = credentials.Certificate(project.serviceAccount)
-            firebase_app = firebase_admin.initialize_app(cred, name=project_id)
-            firebase_apps[project_id] = firebase_app
-            logger.info(f"Firebase Admin SDK initialized for project {project_id}")
-        except Exception as e:
-            logger.error(f"Failed to initialize Firebase Admin SDK: {str(e)}")
-            raise HTTPException(status_code=400, detail=f"Invalid service account: {str(e)}")
+        cred = credentials.Certificate(project.serviceAccount)
+        firebase_app = firebase_admin.initialize_app(cred, name=project_id)
+        firebase_apps[project_id] = firebase_app
         
-        # Initialize Pyrebase for client operations
-        try:
-            pyrebase_config = {
-                "apiKey": project.apiKey,
-                "authDomain": f"{project_id}.firebaseapp.com",
-                "databaseURL": f"https://{project_id}-default-rtdb.firebaseio.com",
-                "storageBucket": f"{project_id}.appspot.com",
-            }
-            
-            pyrebase_app = pyrebase.initialize_app(pyrebase_config)
-            pyrebase_apps[project_id] = pyrebase_app
-            logger.info(f"Pyrebase initialized for project {project_id}")
-        except Exception as e:
-            logger.error(f"Failed to initialize Pyrebase: {str(e)}")
-            # Clean up Firebase Admin if Pyrebase fails
-            if project_id in firebase_apps:
-                firebase_admin.delete_app(firebase_apps[project_id])
-                del firebase_apps[project_id]
-            raise HTTPException(status_code=400, detail=f"Invalid API key or project configuration: {str(e)}")
+        # Initialize Pyrebase
+        pyrebase_config = {
+            "apiKey": project.apiKey,
+            "authDomain": f"{project_id}.firebaseapp.com",
+            "databaseURL": f"https://{project_id}-default-rtdb.firebaseio.com",
+            "storageBucket": f"{project_id}.appspot.com",
+        }
+        pyrebase_app = pyrebase.initialize_app(pyrebase_config)
+        pyrebase_apps[project_id] = pyrebase_app
         
         logger.info(f"Project {project_id} added successfully")
-        return {"success": True, "project_id": project_id, "message": "Project added successfully"}
+        return {"success": True, "project_id": project_id}
         
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"Failed to add project: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to add project: {str(e)}")
 
 @app.delete("/projects/{project_id}")
 async def remove_project(project_id: str):
-    """Remove a Firebase project"""
     try:
-        logger.info(f"Removing project: {project_id}")
-        
-        removed = False
-        
-        # Remove Firebase Admin app
         if project_id in firebase_apps:
-            try:
-                firebase_admin.delete_app(firebase_apps[project_id])
-                logger.info(f"Firebase Admin app deleted for {project_id}")
-                removed = True
-            except Exception as e:
-                logger.warning(f"Error deleting Firebase Admin app: {str(e)}")
+            firebase_admin.delete_app(firebase_apps[project_id])
             del firebase_apps[project_id]
         
-        # Remove Pyrebase app
         if project_id in pyrebase_apps:
             del pyrebase_apps[project_id]
-            logger.info(f"Pyrebase app removed for {project_id}")
-            removed = True
         
-        if not removed:
-            logger.warning(f"Project {project_id} not found in active projects")
-        
-        logger.info(f"Project {project_id} removal completed")
-        return {"success": True, "message": "Project removed successfully"}
-        
+        return {"success": True}
     except Exception as e:
-        logger.error(f"Failed to remove project: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to remove project: {str(e)}")
 
 @app.get("/projects/{project_id}/users")
 async def load_users(project_id: str):
-    """Load all users from Firebase project"""
     try:
-        logger.info(f"Loading users for project: {project_id}")
-        
         if project_id not in firebase_apps:
             raise HTTPException(status_code=404, detail="Project not found")
         
         app = firebase_apps[project_id]
         users = []
         
-        # List all users using Firebase Admin SDK
-        try:
-            page = auth.list_users(app=app)
-            while page:
-                for user in page.users:
-                    # Fix timestamp handling - convert to string if it exists
-                    created_at = None
-                    if user.user_metadata and user.user_metadata.creation_timestamp:
-                        # Check if it's already a string or needs conversion
-                        if hasattr(user.user_metadata.creation_timestamp, 'isoformat'):
-                            created_at = user.user_metadata.creation_timestamp.isoformat()
+        page = auth.list_users(app=app)
+        while page:
+            for user in page.users:
+                created_at = None
+                if user.user_metadata and user.user_metadata.creation_timestamp:
+                    try:
+                        if hasattr(user.user_metadata.creation_timestamp, 'timestamp'):
+                            created_at = datetime.fromtimestamp(user.user_metadata.creation_timestamp.timestamp()).isoformat()
                         else:
-                            # It might be a timestamp in milliseconds
-                            try:
-                                created_at = datetime.fromtimestamp(user.user_metadata.creation_timestamp / 1000).isoformat()
-                            except:
-                                created_at = str(user.user_metadata.creation_timestamp)
-                    
-                    users.append({
-                        "uid": user.uid,
-                        "email": user.email or "",
-                        "displayName": user.display_name,
-                        "disabled": user.disabled,
-                        "emailVerified": user.email_verified,
-                        "createdAt": created_at,
-                    })
+                            created_at = str(user.user_metadata.creation_timestamp)
+                    except:
+                        created_at = None
                 
-                # Get next page
-                page = page.get_next_page() if page.has_next_page else None
-                
-        except Exception as e:
-            logger.error(f"Error listing users: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Failed to list users: {str(e)}")
+                users.append({
+                    "uid": user.uid,
+                    "email": user.email or "",
+                    "displayName": user.display_name,
+                    "disabled": user.disabled,
+                    "emailVerified": user.email_verified,
+                    "createdAt": created_at,
+                })
+            
+            page = page.get_next_page() if page.has_next_page else None
         
-        logger.info(f"Loaded {len(users)} users from project {project_id}")
         return {"users": users}
-        
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"Failed to load users: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to load users: {str(e)}")
 
-@app.post("/projects/{project_id}/users/import")
-async def import_users(project_id: str, user_import: UserImport):
-    """Import users to Firebase project"""
+@app.post("/projects/users/import")
+async def import_users_parallel(user_import: UserImport):
+    """Import users across multiple projects in parallel"""
     try:
-        logger.info(f"Importing {len(user_import.emails)} users to project {project_id}")
-        
-        if project_id not in firebase_apps:
-            raise HTTPException(status_code=404, detail="Project not found")
-        
-        app = firebase_apps[project_id]
+        project_ids = user_import.projectIds
         emails = user_import.emails
         
-        # Process in batches of 1000 (Firebase limit)
-        batch_size = 1000
-        total_imported = 0
+        # Split emails across projects
+        emails_per_project = len(emails) // len(project_ids)
+        remainder = len(emails) % len(project_ids)
         
-        for i in range(0, len(emails), batch_size):
-            batch_emails = emails[i:i + batch_size]
-            batch = []
+        project_email_chunks = {}
+        start_idx = 0
+        
+        for i, project_id in enumerate(project_ids):
+            chunk_size = emails_per_project + (1 if i < remainder else 0)
+            project_email_chunks[project_id] = emails[start_idx:start_idx + chunk_size]
+            start_idx += chunk_size
+        
+        # Import in parallel
+        async def import_to_project(project_id: str, emails_chunk: List[str]):
+            if project_id not in firebase_apps:
+                return {"project_id": project_id, "imported": 0, "error": "Project not found"}
             
-            for email in batch_emails:
-                # Create consistent UID like in your working script
-                uid = hashlib.md5(email.encode()).hexdigest().lower()
-                user_record = auth.ImportUserRecord(email=email, uid=uid)
-                batch.append(user_record)
+            app = firebase_apps[project_id]
+            batch_size = 1000
+            total_imported = 0
             
-            # Import batch
-            try:
-                results = auth.import_users(batch, app=app)
-                total_imported += results.success_count
+            for i in range(0, len(emails_chunk), batch_size):
+                batch_emails = emails_chunk[i:i + batch_size]
+                batch = []
                 
-                logger.info(f"Batch {i//batch_size + 1}: {results.success_count} success, {results.failure_count} failures")
+                for email in batch_emails:
+                    uid = hashlib.md5(email.encode()).hexdigest().lower()
+                    user_record = auth.ImportUserRecord(email=email, uid=uid)
+                    batch.append(user_record)
                 
-                if results.failure_count > 0:
-                    for error in results.errors:
-                        logger.warning(f"Import error at index {error.index}: {error.reason}")
-                        
-            except Exception as e:
-                logger.error(f"Failed to import batch: {str(e)}")
-                # Continue with next batch
-                continue
+                try:
+                    results = auth.import_users(batch, app=app)
+                    total_imported += results.success_count
+                    await asyncio.sleep(0.1)  # Brief pause between batches
+                except Exception as e:
+                    logger.error(f"Import batch failed for {project_id}: {str(e)}")
             
-            # Add delay between batches (like in your working script)
-            if i + batch_size < len(emails):
-                await asyncio.sleep(5)  # 5 second delay
+            return {"project_id": project_id, "imported": total_imported}
         
-        logger.info(f"Import completed: {total_imported} users imported")
-        return {"imported": total_imported}
+        # Execute imports in parallel
+        tasks = []
+        for project_id, emails_chunk in project_email_chunks.items():
+            task = import_to_project(project_id, emails_chunk)
+            tasks.append(task)
         
-    except HTTPException:
-        raise
+        results = await asyncio.gather(*tasks)
+        
+        total_imported = sum(result["imported"] for result in results)
+        
+        return {
+            "success": True,
+            "total_imported": total_imported,
+            "results": results
+        }
+        
     except Exception as e:
-        logger.error(f"Failed to import users: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to import users: {str(e)}")
 
-@app.delete("/projects/{project_id}/users")
-async def delete_all_users(project_id: str):
-    """Delete all users from Firebase project"""
+@app.delete("/projects/users/bulk")
+async def bulk_delete_users(bulk_delete: BulkUserDelete):
+    """Delete users across multiple projects in parallel"""
     try:
-        logger.info(f"Deleting all users from project {project_id}")
+        async def delete_from_project(project_id: str):
+            if project_id not in firebase_apps:
+                return {"project_id": project_id, "deleted": 0, "error": "Project not found"}
+            
+            app = firebase_apps[project_id]
+            total_deleted = 0
+            batch_size = 1000
+            
+            if bulk_delete.userIds:
+                # Delete specific users
+                for i in range(0, len(bulk_delete.userIds), batch_size):
+                    batch_uids = bulk_delete.userIds[i:i + batch_size]
+                    try:
+                        results = auth.delete_users(batch_uids, app=app)
+                        total_deleted += results.success_count
+                        await asyncio.sleep(0.1)
+                    except Exception as e:
+                        logger.error(f"Delete batch failed for {project_id}: {str(e)}")
+            else:
+                # Delete all users
+                while True:
+                    try:
+                        page = auth.list_users(max_results=batch_size, app=app)
+                        if not page.users:
+                            break
+                        
+                        uids = [user.uid for user in page.users]
+                        results = auth.delete_users(uids, app=app)
+                        total_deleted += results.success_count
+                        await asyncio.sleep(0.1)
+                    except Exception as e:
+                        logger.error(f"Delete batch failed for {project_id}: {str(e)}")
+                        break
+            
+            return {"project_id": project_id, "deleted": total_deleted}
         
-        if project_id not in firebase_apps:
-            raise HTTPException(status_code=404, detail="Project not found")
+        # Execute deletions in parallel
+        tasks = [delete_from_project(project_id) for project_id in bulk_delete.projectIds]
+        results = await asyncio.gather(*tasks)
         
-        app = firebase_apps[project_id]
-        total_deleted = 0
+        total_deleted = sum(result["deleted"] for result in results)
         
-        # List and delete users in batches (like in your working script)
-        batch_size = 1000
+        return {
+            "success": True,
+            "total_deleted": total_deleted,
+            "results": results
+        }
         
-        while True:
-            try:
-                page = auth.list_users(max_results=batch_size, app=app)
-                if not page.users:
-                    break
-                
-                uids = [user.uid for user in page.users]
-                results = auth.delete_users(uids, app=app)
-                total_deleted += results.success_count
-                
-                logger.info(f"Deleted {results.success_count} users, {results.failure_count} failures")
-                
-                if results.failure_count > 0:
-                    for error in results.errors:
-                        logger.warning(f"Delete error: {error.reason}")
-                
-                # Add delay between batches
-                await asyncio.sleep(5)
-                
-            except Exception as e:
-                logger.error(f"Error in delete batch: {str(e)}")
-                break
-        
-        logger.info(f"Deletion completed: {total_deleted} users deleted")
-        return {"deleted": total_deleted}
-        
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"Failed to delete users: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to delete users: {str(e)}")
 
-# Campaign management
-active_campaigns = {}
-
-@app.post("/campaigns/{campaign_id}/start")
-async def start_campaign(campaign_id: str, campaign: CampaignStart, background_tasks: BackgroundTasks):
-    """Start a password reset campaign"""
+# Campaign Management
+@app.post("/campaigns")
+async def create_campaign(campaign: CampaignCreate):
+    """Create a new campaign"""
     try:
-        logger.info(f"Starting campaign {campaign_id}")
+        campaign_id = str(uuid.uuid4())
         
-        # Add campaign to background tasks
-        background_tasks.add_task(run_campaign, campaign_id, campaign)
-        
-        active_campaigns[campaign_id] = {
-            "status": "running",
+        campaign_data = {
+            "id": campaign_id,
+            "name": campaign.name,
+            "projectIds": campaign.projectIds,
+            "selectedUsers": campaign.selectedUsers,
+            "batchSize": campaign.batchSize,
+            "workers": campaign.workers,
+            "template": campaign.template,
+            "status": "pending",
+            "createdAt": datetime.now().isoformat(),
             "processed": 0,
             "successful": 0,
             "failed": 0,
-            "currentBatch": 1,
-            "totalBatches": 0,
-            "currentProject": campaign.projectIds[0] if campaign.projectIds else "",
             "errors": [],
-            "startedAt": datetime.now().isoformat(),
+            "projectStats": {pid: {"processed": 0, "successful": 0, "failed": 0} for pid in campaign.projectIds}
         }
+        
+        active_campaigns[campaign_id] = campaign_data
+        
+        return {"success": True, "campaign_id": campaign_id, "campaign": campaign_data}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create campaign: {str(e)}")
+
+@app.get("/campaigns")
+async def list_campaigns():
+    """List all campaigns"""
+    return {"campaigns": list(active_campaigns.values())}
+
+@app.get("/campaigns/{campaign_id}")
+async def get_campaign(campaign_id: str):
+    """Get campaign details"""
+    if campaign_id not in active_campaigns:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    return active_campaigns[campaign_id]
+
+@app.put("/campaigns/{campaign_id}")
+async def update_campaign(campaign_id: str, campaign_update: CampaignUpdate):
+    """Update campaign settings"""
+    if campaign_id not in active_campaigns:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    
+    campaign = active_campaigns[campaign_id]
+    
+    if campaign["status"] == "running":
+        raise HTTPException(status_code=400, detail="Cannot update running campaign")
+    
+    if campaign_update.name:
+        campaign["name"] = campaign_update.name
+    if campaign_update.batchSize:
+        campaign["batchSize"] = campaign_update.batchSize
+    if campaign_update.workers:
+        campaign["workers"] = campaign_update.workers
+    if campaign_update.template:
+        campaign["template"] = campaign_update.template
+    
+    return {"success": True, "campaign": campaign}
+
+@app.delete("/campaigns/{campaign_id}")
+async def delete_campaign(campaign_id: str):
+    """Delete a campaign"""
+    if campaign_id not in active_campaigns:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    
+    campaign = active_campaigns[campaign_id]
+    
+    if campaign["status"] == "running":
+        raise HTTPException(status_code=400, detail="Cannot delete running campaign")
+    
+    del active_campaigns[campaign_id]
+    if campaign_id in campaign_stats:
+        del campaign_stats[campaign_id]
+    
+    return {"success": True}
+
+@app.post("/campaigns/{campaign_id}/start")
+async def start_campaign(campaign_id: str, background_tasks: BackgroundTasks):
+    """Start a campaign with multi-project parallelism"""
+    try:
+        if campaign_id not in active_campaigns:
+            raise HTTPException(status_code=404, detail="Campaign not found")
+        
+        campaign = active_campaigns[campaign_id]
+        
+        if campaign["status"] == "running":
+            raise HTTPException(status_code=400, detail="Campaign already running")
+        
+        campaign["status"] = "running"
+        campaign["startedAt"] = datetime.now().isoformat()
+        
+        background_tasks.add_task(run_parallel_campaign, campaign_id)
         
         return {"success": True}
         
     except Exception as e:
-        logger.error(f"Failed to start campaign: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to start campaign: {str(e)}")
 
-async def run_campaign(campaign_id: str, campaign: CampaignStart):
-    """Run password reset campaign in background"""
+async def run_parallel_campaign(campaign_id: str):
+    """Run campaign across multiple projects in parallel"""
     try:
-        logger.info(f"Running campaign {campaign_id}")
+        campaign = active_campaigns[campaign_id]
         
-        total_users = sum(len(users) for users in campaign.selectedUsers.values())
-        total_batches = (total_users + campaign.batchSize - 1) // campaign.batchSize
-        
-        active_campaigns[campaign_id]["totalBatches"] = total_batches
-        
-        processed = 0
-        successful = 0
-        failed = 0
-        current_batch = 1
-        
-        # Process each project
-        for project_id in campaign.projectIds:
-            if project_id not in pyrebase_apps:
-                logger.warning(f"Project {project_id} not found in pyrebase apps")
-                continue
+        async def run_project_campaign(project_id: str, user_uids: List[str]):
+            """Run campaign for a single project"""
+            if project_id not in pyrebase_apps or project_id not in firebase_apps:
+                return
             
-            active_campaigns[campaign_id]["currentProject"] = project_id
             pyrebase_auth = pyrebase_apps[project_id].auth()
-            user_uids = campaign.selectedUsers.get(project_id, [])
+            admin_app = firebase_apps[project_id]
             
-            # Get user emails from Firebase (like in your working script)
-            app = firebase_apps[project_id]
-            users_page = auth.list_users(app=app)
+            # Get user emails
             user_emails = {}
+            try:
+                users_page = auth.list_users(app=admin_app)
+                for user in users_page.iterate_all():
+                    if user.uid in user_uids and user.email:
+                        user_emails[user.uid] = user.email
+            except Exception as e:
+                logger.error(f"Failed to get user emails for {project_id}: {str(e)}")
+                return
             
-            for user in users_page.iterate_all():
-                if user.uid in user_uids and user.email:
-                    user_emails[user.uid] = user.email
+            # Send emails
+            project_processed = 0
+            project_successful = 0
+            project_failed = 0
             
-            # Send password reset emails in batches
-            for i in range(0, len(user_uids), campaign.batchSize):
-                batch_uids = user_uids[i:i + campaign.batchSize]
+            for uid in user_uids:
+                email = user_emails.get(uid)
+                if email:
+                    try:
+                        pyrebase_auth.send_password_reset_email(email)
+                        project_successful += 1
+                        increment_daily_count(project_id)
+                        logger.info(f"Password reset sent to {email} from {project_id}")
+                    except Exception as e:
+                        project_failed += 1
+                        error_msg = f"Failed to send to {email}: {str(e)}"
+                        campaign["errors"].append(error_msg)
+                        logger.error(error_msg)
                 
-                active_campaigns[campaign_id]["currentBatch"] = current_batch
+                project_processed += 1
                 
-                for uid in batch_uids:
-                    email = user_emails.get(uid)
-                    if email:
-                        try:
-                            pyrebase_auth.send_password_reset_email(email)
-                            successful += 1
-                            logger.info(f"Password reset sent to {email}")
-                        except Exception as e:
-                            failed += 1
-                            error_msg = f"Failed to send to {email}: {str(e)}"
-                            active_campaigns[campaign_id]["errors"].append(error_msg)
-                            logger.error(error_msg)
-                    
-                    processed += 1
-                    
-                    # Update progress
-                    active_campaigns[campaign_id].update({
-                        "processed": processed,
-                        "successful": successful,
-                        "failed": failed,
-                    })
-                    
-                    # Wait between emails (like in your working script)
-                    await asyncio.sleep(0.1)
+                # Update campaign stats
+                campaign["processed"] += 1
+                campaign["successful"] += (1 if email and project_successful > campaign["projectStats"][project_id]["successful"] else 0)
+                campaign["failed"] += (1 if project_failed > campaign["projectStats"][project_id]["failed"] else 0)
                 
-                current_batch += 1
+                campaign["projectStats"][project_id] = {
+                    "processed": project_processed,
+                    "successful": project_successful,
+                    "failed": project_failed
+                }
                 
-                # Wait between batches
-                await asyncio.sleep(0.2)
+                # Brief pause between emails
+                await asyncio.sleep(0.15)
+        
+        # Run all projects in parallel
+        tasks = []
+        for project_id, user_uids in campaign["selectedUsers"].items():
+            task = run_project_campaign(project_id, user_uids)
+            tasks.append(task)
+        
+        await asyncio.gather(*tasks)
         
         # Mark campaign as completed
-        active_campaigns[campaign_id].update({
-            "status": "completed",
-            "completedAt": datetime.now().isoformat(),
-        })
+        campaign["status"] = "completed"
+        campaign["completedAt"] = datetime.now().isoformat()
         
         logger.info(f"Campaign {campaign_id} completed successfully")
         
     except Exception as e:
         logger.error(f"Campaign {campaign_id} failed: {str(e)}")
-        active_campaigns[campaign_id].update({
-            "status": "failed",
-            "errors": active_campaigns[campaign_id]["errors"] + [f"Campaign failed: {str(e)}"],
-        })
+        campaign["status"] = "failed"
+        campaign["errors"].append(f"Campaign failed: {str(e)}")
 
-@app.get("/campaigns/{campaign_id}/progress")
-async def get_campaign_progress(campaign_id: str):
-    """Get campaign progress"""
-    if campaign_id not in active_campaigns:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-    
-    return active_campaigns[campaign_id]
+@app.get("/projects/{project_id}/daily-count")
+async def get_project_daily_count(project_id: str):
+    """Get daily count for a project"""
+    count = get_daily_count(project_id)
+    return {"project_id": project_id, "date": date.today().isoformat(), "sent": count}
 
-@app.post("/campaigns/{campaign_id}/pause")
-async def pause_campaign(campaign_id: str):
-    """Pause a campaign"""
-    if campaign_id in active_campaigns:
-        active_campaigns[campaign_id]["status"] = "paused"
-    return {"success": True}
-
-@app.post("/campaigns/{campaign_id}/resume")
-async def resume_campaign(campaign_id: str):
-    """Resume a campaign"""
-    if campaign_id in active_campaigns:
-        active_campaigns[campaign_id]["status"] = "running"
-    return {"success": True}
-
-@app.post("/projects/{project_id}/test-email")
-async def test_email_send(project_id: str, test_email: TestEmail):
-    """Test sending a password reset email"""
-    try:
-        logger.info(f"Testing email send for project {project_id} to {test_email.email}")
-        
-        if project_id not in pyrebase_apps:
-            raise HTTPException(status_code=404, detail="Project not found")
-        
-        pyrebase_auth = pyrebase_apps[project_id].auth()
-        pyrebase_auth.send_password_reset_email(test_email.email)
-        
-        logger.info(f"Test email sent successfully to {test_email.email}")
-        return {"success": True}
-        
-    except Exception as e:
-        logger.error(f"Test email failed: {str(e)}")
-        return {"success": False, "error": str(e)}
+@app.get("/daily-counts")
+async def get_all_daily_counts():
+    """Get all daily counts"""
+    return {"daily_counts": daily_counts}
 
 if __name__ == "__main__":
     import uvicorn
-    print("🚀 Starting Firebase Email Campaign Backend...")
-    print("📍 Backend will be available at: http://localhost:8000")
+    print("🚀 Starting Enhanced Firebase Email Campaign Backend v2.0...")
+    print("📍 Backend available at: http://localhost:8000")
     print("📖 API documentation: http://localhost:8000/docs")
     print("🔗 Health check: http://localhost:8000/health")
-    print("\n⚠️  Make sure to:")
-    print("1. Have your Firebase service account JSON files ready")
-    print("2. Get your Firebase Web API Keys from Firebase Console")
-    print("3. Add projects through the React app interface")
+    print("\n✨ New Features:")
+    print("• Multi-project parallel processing")
+    print("• Advanced campaign management")
+    print("• Bulk user operations")
+    print("• Daily count tracking")
+    print("• Enhanced performance and scalability")
     print("\n🔄 Starting server...")
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
