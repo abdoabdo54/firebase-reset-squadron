@@ -1,11 +1,12 @@
 
 import { useState } from 'react';
 import { useApp } from '@/contexts/AppContext';
-import { Plus, Server, Trash2, Upload } from 'lucide-react';
+import { Plus, Server, Trash2, Upload, AlertCircle, CheckCircle, Clock } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
 
 export const ProjectsPage = () => {
@@ -49,6 +50,13 @@ export const ProjectsPage = () => {
         throw new Error("Invalid service account file - missing required fields");
       }
 
+      console.log('🔥 Submitting project with Firebase config:', {
+        projectId: serviceAccount.project_id,
+        apiKey: formData.apiKey,
+        name: formData.name,
+        adminEmail: formData.adminEmail
+      });
+
       await addProject({
         name: formData.name,
         adminEmail: formData.adminEmail,
@@ -64,10 +72,10 @@ export const ProjectsPage = () => {
         description: "Firebase project added successfully!",
       });
     } catch (error) {
-      console.error('Error adding project:', error);
+      console.error('❌ Error adding project:', error);
       toast({
         title: "Error",
-        description: error instanceof Error ? error.message : "Failed to add project. Make sure the backend is running.",
+        description: error instanceof Error ? error.message : "Failed to add project. Check console for details.",
         variant: "destructive",
       });
     } finally {
@@ -83,10 +91,10 @@ export const ProjectsPage = () => {
         description: `Firebase project "${name}" has been removed successfully.`,
       });
     } catch (error) {
-      console.error('Error removing project:', error);
+      console.error('❌ Error removing project:', error);
       toast({
         title: "Error",
-        description: "Failed to remove project. Make sure the backend is running.",
+        description: error instanceof Error ? error.message : "Failed to remove project. Check console for details.",
         variant: "destructive",
       });
     }
@@ -107,6 +115,13 @@ export const ProjectsPage = () => {
           Add Project
         </Button>
       </div>
+
+      <Alert className="bg-blue-900/20 border-blue-500/50">
+        <AlertCircle className="h-4 w-4 text-blue-400" />
+        <AlertDescription className="text-blue-300">
+          Make sure your backend is running on port 8000. Check the console for connection status.
+        </AlertDescription>
+      </Alert>
 
       {showAddForm && (
         <Card className="bg-gray-800 border-gray-700">
@@ -147,7 +162,7 @@ export const ProjectsPage = () => {
                   id="apiKey"
                   value={formData.apiKey}
                   onChange={(e) => setFormData({ ...formData, apiKey: e.target.value })}
-                  placeholder="AIzaSyA..."
+                  placeholder="AIzaSyA2NT9UVavk0yiWOPJIz76NX7vnfzq6_s8"
                   className="bg-gray-700 border-gray-600 text-white"
                   disabled={isSubmitting}
                 />
@@ -207,18 +222,17 @@ export const ProjectsPage = () => {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {projects.map((project, index) => (
-          <Card key={`${project.id}-${index}`} className="bg-gray-800 border-gray-700 hover:bg-gray-750 transition-colors">
+        {projects.map((project) => (
+          <Card key={project.id} className="bg-gray-800 border-gray-700 hover:bg-gray-750 transition-colors">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-lg font-semibold text-white flex items-center gap-2">
                 <Server className="w-5 h-5 text-blue-500" />
                 {project.name}
               </CardTitle>
               <div className="flex items-center gap-2">
-                <div className={`w-2 h-2 rounded-full ${
-                  project.status === 'active' ? 'bg-green-500' :
-                  project.status === 'error' ? 'bg-red-500' : 'bg-yellow-500'
-                }`} />
+                {project.status === 'active' && <CheckCircle className="w-4 h-4 text-green-500" />}
+                {project.status === 'error' && <AlertCircle className="w-4 h-4 text-red-500" />}
+                {project.status === 'loading' && <Clock className="w-4 h-4 text-yellow-500" />}
                 <Button
                   variant="ghost"
                   size="sm"
@@ -238,7 +252,7 @@ export const ProjectsPage = () => {
                 <div>
                   <p className="text-gray-400 text-sm">Project ID</p>
                   <p className="text-white font-mono text-sm">
-                    {project.serviceAccount?.project_id || 'N/A'}
+                    {project.serviceAccount?.project_id || project.id}
                   </p>
                 </div>
                 <div>

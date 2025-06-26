@@ -79,12 +79,13 @@ export const useApp = () => {
 // Backend API base URL
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
-// API helper functions
+// Enhanced API helper functions
 const apiCall = async (endpoint: string, options: RequestInit = {}) => {
-  console.log(`API Call: ${options.method || 'GET'} ${API_BASE_URL}${endpoint}`);
+  const url = `${API_BASE_URL}${endpoint}`;
+  console.log(`🔄 API Call: ${options.method || 'GET'} ${url}`);
   
   try {
-    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+    const response = await fetch(url, {
       headers: {
         'Content-Type': 'application/json',
         ...options.headers,
@@ -92,19 +93,25 @@ const apiCall = async (endpoint: string, options: RequestInit = {}) => {
       ...options,
     });
     
-    console.log(`API Response: ${response.status} ${response.statusText}`);
+    console.log(`✅ API Response: ${response.status} ${response.statusText}`);
     
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`API Error Response: ${errorText}`);
-      throw new Error(`API call failed: ${response.status} ${response.statusText}`);
+      console.error(`❌ API Error Response: ${errorText}`);
+      throw new Error(`API call failed: ${response.status} ${response.statusText} - ${errorText}`);
     }
     
     const data = await response.json();
-    console.log('API Response Data:', data);
+    console.log('📦 Response Data:', data);
     return data;
   } catch (error) {
-    console.error('API Call Error:', error);
+    console.error('💥 API Call Error:', error);
+    
+    // Provide more specific error messages
+    if (error instanceof TypeError && error.message.includes('Failed to fetch')) {
+      throw new Error(`Cannot connect to backend at ${API_BASE_URL}. Make sure the backend is running.`);
+    }
+    
     throw error;
   }
 };
@@ -117,23 +124,28 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [campaignStats, setCampaignStats] = useState<CampaignStats | null>(null);
   const [templates, setTemplates] = useState<{ [projectId: string]: string }>({});
 
-  // Test backend connection on startup
+  // Test backend connection on startup with better error handling
   useEffect(() => {
     const testConnection = async () => {
       try {
-        console.log('Testing backend connection...');
+        console.log('🔍 Testing backend connection...');
         const response = await apiCall('/health');
-        console.log('Backend connection successful:', response);
+        console.log('✅ Backend connection successful:', response);
       } catch (error) {
-        console.error('Backend connection failed:', error);
-        console.error('Make sure the backend is running: python src/utils/firebaseBackend.py');
+        console.error('❌ Backend connection failed:', error);
+        if (error instanceof Error) {
+          if (error.message.includes('Cannot connect to backend')) {
+            console.error('🚨 Make sure the backend is running: python src/utils/firebaseBackend.py');
+          }
+        }
       }
     };
+    
     testConnection();
   }, []);
 
   const addProject = async (projectData: Omit<FirebaseProject, 'id' | 'createdAt' | 'status'>) => {
-    console.log('Adding project with data:', projectData);
+    console.log('➕ Adding project with data:', projectData);
     
     // Validate service account
     if (!projectData.serviceAccount?.project_id || !projectData.serviceAccount?.client_email) {
@@ -144,7 +156,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     
     const newProject: FirebaseProject = {
       ...projectData,
-      id: projectId, // Use the actual Firebase project ID from service account
+      id: projectId,
       createdAt: new Date().toISOString(),
       status: 'loading',
     };
@@ -152,9 +164,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setProjects(prev => [...prev, newProject]);
     
     try {
-      console.log(`Adding Firebase project: ${newProject.name} (ID: ${projectId})`);
+      console.log(`🔥 Adding Firebase project: ${newProject.name} (ID: ${projectId})`);
       
-      // Make real API call to backend to add Firebase project
+      // Make API call to backend
       const response = await apiCall('/projects', {
         method: 'POST',
         body: JSON.stringify({
@@ -165,7 +177,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }),
       });
       
-      console.log('Project added successfully:', response);
+      console.log('✅ Project added successfully:', response);
       
       setProjects(prev => prev.map(p => 
         p.id === projectId ? { ...p, status: 'active' as const } : p
@@ -191,32 +203,23 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }));
       
     } catch (error) {
-      console.error('Error adding project:', error);
+      console.error('❌ Error adding project:', error);
       setProjects(prev => prev.map(p => 
         p.id === projectId ? { ...p, status: 'error' as const } : p
       ));
-      
-      // Provide more specific error messages
-      if (error instanceof Error) {
-        if (error.message.includes('404')) {
-          throw new Error('Backend server not found. Make sure to run: python src/utils/firebaseBackend.py');
-        } else if (error.message.includes('Failed to fetch')) {
-          throw new Error('Cannot connect to backend. Make sure the backend is running on http://localhost:8000');
-        }
-      }
       throw error;
     }
   };
 
   const removeProject = async (id: string) => {
     try {
-      console.log(`Removing project: ${id}`);
+      console.log(`🗑️ Removing project: ${id}`);
       
       await apiCall(`/projects/${id}`, {
         method: 'DELETE',
       });
       
-      console.log(`Project ${id} removed successfully`);
+      console.log(`✅ Project ${id} removed successfully`);
       
       setProjects(prev => prev.filter(p => p.id !== id));
       setUsers(prev => {
@@ -230,10 +233,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         return newTemplates;
       });
     } catch (error) {
-      console.error('Error removing project:', error);
-      if (error instanceof Error && error.message.includes('404')) {
-        throw new Error('Backend server not found. Make sure to run: python src/utils/firebaseBackend.py');
-      }
+      console.error('❌ Error removing project:', error);
       throw error;
     }
   };

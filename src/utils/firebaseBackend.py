@@ -24,12 +24,12 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Firebase Email Campaign Backend", version="1.0.0")
 
-# Enable CORS for frontend
+# Enable CORS for frontend - More permissive for development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify your frontend URL
+    allow_origins=["*"],  # Allow all origins for development
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -57,11 +57,20 @@ class TestEmail(BaseModel):
 
 @app.get("/")
 async def root():
-    return {"message": "Firebase Email Campaign Backend API", "status": "running"}
+    """Root endpoint"""
+    logger.info("Root endpoint accessed")
+    return {"message": "Firebase Email Campaign Backend API", "status": "running", "version": "1.0.0"}
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+    """Health check endpoint"""
+    logger.info("Health check endpoint accessed")
+    return {
+        "status": "healthy", 
+        "timestamp": datetime.now().isoformat(),
+        "message": "Backend is running successfully",
+        "projects_connected": len(firebase_apps)
+    }
 
 @app.post("/projects")
 async def add_project(project: ProjectCreate):
@@ -82,8 +91,8 @@ async def add_project(project: ProjectCreate):
             logger.warning(f"Project {project_id} already exists, removing old instance")
             try:
                 firebase_admin.delete_app(firebase_apps[project_id])
-            except:
-                pass  # Ignore errors when deleting old app
+            except Exception as e:
+                logger.warning(f"Error removing old Firebase app: {e}")
             del firebase_apps[project_id]
         
         # Initialize Firebase Admin SDK
@@ -117,7 +126,7 @@ async def add_project(project: ProjectCreate):
             raise HTTPException(status_code=400, detail=f"Invalid API key: {str(e)}")
         
         logger.info(f"Project {project_id} added successfully")
-        return {"success": True, "project_id": project_id}
+        return {"success": True, "project_id": project_id, "message": "Project added successfully"}
         
     except HTTPException:
         raise
@@ -131,11 +140,14 @@ async def remove_project(project_id: str):
     try:
         logger.info(f"Removing project: {project_id}")
         
+        removed = False
+        
         # Remove Firebase Admin app
         if project_id in firebase_apps:
             try:
                 firebase_admin.delete_app(firebase_apps[project_id])
                 logger.info(f"Firebase Admin app deleted for {project_id}")
+                removed = True
             except Exception as e:
                 logger.warning(f"Error deleting Firebase Admin app: {str(e)}")
             del firebase_apps[project_id]
@@ -144,9 +156,13 @@ async def remove_project(project_id: str):
         if project_id in pyrebase_apps:
             del pyrebase_apps[project_id]
             logger.info(f"Pyrebase app removed for {project_id}")
+            removed = True
         
-        logger.info(f"Project {project_id} removed successfully")
-        return {"success": True}
+        if not removed:
+            logger.warning(f"Project {project_id} not found in active projects")
+        
+        logger.info(f"Project {project_id} removal completed")
+        return {"success": True, "message": "Project removed successfully"}
         
     except Exception as e:
         logger.error(f"Failed to remove project: {str(e)}")
@@ -432,6 +448,7 @@ if __name__ == "__main__":
     print("🚀 Starting Firebase Email Campaign Backend...")
     print("📍 Backend will be available at: http://localhost:8000")
     print("📖 API documentation: http://localhost:8000/docs")
+    print("🔗 Health check: http://localhost:8000/health")
     print("\n⚠️  Make sure to:")
     print("1. Have your Firebase service account JSON files ready")
     print("2. Get your Firebase Web API Keys from Firebase Console")
