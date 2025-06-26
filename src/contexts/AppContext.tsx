@@ -1,3 +1,4 @@
+
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 
 interface FirebaseProject {
@@ -76,28 +77,24 @@ export const useApp = () => {
   return context;
 };
 
-// Simulate API delay
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+// Backend API base URL - you'll need to set this to your actual backend URL
+const API_BASE_URL = process.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
-// Generate realistic mock users based on email patterns
-const generateMockUsers = (count: number): User[] => {
-  const domains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'company.com'];
-  const names = ['john', 'jane', 'mike', 'sarah', 'david', 'emma', 'alex', 'lisa'];
-  
-  return Array.from({ length: count }, (_, i) => {
-    const name = names[Math.floor(Math.random() * names.length)];
-    const domain = domains[Math.floor(Math.random() * domains.length)];
-    const email = `${name}${i + Math.floor(Math.random() * 1000)}@${domain}`;
-    
-    return {
-      uid: `uid_${i}_${Date.now()}`,
-      email,
-      displayName: `${name.charAt(0).toUpperCase() + name.slice(1)} User`,
-      disabled: Math.random() < 0.05, // 5% disabled
-      emailVerified: Math.random() < 0.8, // 80% verified
-      createdAt: new Date(Date.now() - Math.random() * 90 * 24 * 60 * 60 * 1000).toISOString(),
-    };
+// API helper functions
+const apiCall = async (endpoint: string, options: RequestInit = {}) => {
+  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+    headers: {
+      'Content-Type': 'application/json',
+      ...options.headers,
+    },
+    ...options,
   });
+  
+  if (!response.ok) {
+    throw new Error(`API call failed: ${response.statusText}`);
+  }
+  
+  return response.json();
 };
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
@@ -119,13 +116,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setProjects(prev => [...prev, newProject]);
     
     try {
-      // Simulate Firebase connection validation
-      await delay(2000);
+      // Make real API call to backend to add Firebase project
+      const response = await apiCall('/projects', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: projectData.name,
+          adminEmail: projectData.adminEmail,
+          serviceAccount: projectData.serviceAccount,
+          apiKey: projectData.apiKey,
+        }),
+      });
       
-      // Check if service account is valid
-      if (!projectData.serviceAccount?.project_id) {
-        throw new Error('Invalid service account file');
-      }
+      console.log('Project added successfully:', response);
       
       setProjects(prev => prev.map(p => 
         p.id === newProject.id ? { ...p, status: 'active' as const } : p
@@ -151,6 +153,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }));
       
     } catch (error) {
+      console.error('Error adding project:', error);
       setProjects(prev => prev.map(p => 
         p.id === newProject.id ? { ...p, status: 'error' as const } : p
       ));
@@ -158,31 +161,41 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   };
 
-  const removeProject = (id: string) => {
-    setProjects(prev => prev.filter(p => p.id !== id));
-    setUsers(prev => {
-      const newUsers = { ...prev };
-      delete newUsers[id];
-      return newUsers;
-    });
-    setTemplates(prev => {
-      const newTemplates = { ...prev };
-      delete newTemplates[id];
-      return newTemplates;
-    });
+  const removeProject = async (id: string) => {
+    try {
+      await apiCall(`/projects/${id}`, {
+        method: 'DELETE',
+      });
+      
+      setProjects(prev => prev.filter(p => p.id !== id));
+      setUsers(prev => {
+        const newUsers = { ...prev };
+        delete newUsers[id];
+        return newUsers;
+      });
+      setTemplates(prev => {
+        const newTemplates = { ...prev };
+        delete newTemplates[id];
+        return newTemplates;
+      });
+    } catch (error) {
+      console.error('Error removing project:', error);
+      throw error;
+    }
   };
 
   const loadUsers = async (projectId: string) => {
     try {
-      await delay(1500); // Simulate API call
+      console.log(`Loading users for project ${projectId}...`);
       
-      // Generate different amounts of users based on project
-      const userCount = Math.floor(Math.random() * 500) + 100; // 100-600 users
-      const mockUsers = generateMockUsers(userCount);
+      // Make real API call to load users from Firebase
+      const response = await apiCall(`/projects/${projectId}/users`);
+      
+      console.log(`Loaded ${response.users.length} users from Firebase`);
       
       setUsers(prev => ({
         ...prev,
-        [projectId]: mockUsers,
+        [projectId]: response.users,
       }));
     } catch (error) {
       console.error('Error loading users:', error);
@@ -192,26 +205,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const importUsers = async (projectId: string, emails: string[]): Promise<number> => {
     try {
-      const batchSize = 100; // Simulate batch processing like your Python script
-      const batches = Math.ceil(emails.length / batchSize);
-      let imported = 0;
+      console.log(`Importing ${emails.length} users to project ${projectId}...`);
       
-      for (let i = 0; i < batches; i++) {
-        const batchEmails = emails.slice(i * batchSize, (i + 1) * batchSize);
-        
-        // Simulate batch import with some failures
-        await delay(500);
-        const successRate = 0.95; // 95% success rate
-        const successful = Math.floor(batchEmails.length * successRate);
-        imported += successful;
-        
-        console.log(`Batch ${i + 1}/${batches}: ${successful}/${batchEmails.length} users imported`);
-      }
+      // Make real API call to import users using Firebase Admin SDK
+      const response = await apiCall(`/projects/${projectId}/users/import`, {
+        method: 'POST',
+        body: JSON.stringify({ emails }),
+      });
+      
+      console.log(`Import completed: ${response.imported} users imported successfully`);
       
       // Reload users after import
       await loadUsers(projectId);
       
-      return imported;
+      return response.imported;
     } catch (error) {
       console.error('Error importing users:', error);
       throw error;
@@ -220,14 +227,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const deleteAllUsers = async (projectId: string) => {
     try {
-      const currentUsers = users[projectId] || [];
-      const batchSize = 100;
-      const batches = Math.ceil(currentUsers.length / batchSize);
+      console.log(`Deleting all users from project ${projectId}...`);
       
-      for (let i = 0; i < batches; i++) {
-        await delay(300); // Simulate deletion time
-        console.log(`Deleting batch ${i + 1}/${batches}`);
-      }
+      // Make real API call to delete all users using Firebase Admin SDK
+      const response = await apiCall(`/projects/${projectId}/users`, {
+        method: 'DELETE',
+      });
+      
+      console.log(`Deleted ${response.deleted} users successfully`);
       
       setUsers(prev => ({
         ...prev,
@@ -266,146 +273,96 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const campaign = campaigns.find(c => c.id === campaignId);
     if (!campaign) return;
 
-    // Update campaign status to running
-    const updateCampaign = (updates: Partial<Campaign>) => {
-      setCampaigns(prev => prev.map(c => 
-        c.id === campaignId ? { ...c, ...updates } : c
-      ));
-      setCurrentCampaign(prev => prev ? { ...prev, ...updates } : null);
-    };
-
-    updateCampaign({ 
-      status: 'running', 
-      startedAt: new Date().toISOString(),
-      currentBatch: 1 
-    });
-
-    // Initialize campaign stats
-    setCampaignStats({
-      emailsSent: 0,
-      emailsFailed: 0,
-      currentProject: campaign.projectIds[0],
-      currentBatch: 1,
-      estimatedTimeRemaining: 0,
-    });
-
     try {
-      const totalUsers = Object.values(campaign.selectedUsers).reduce((sum, users) => sum + users.length, 0);
-      const waitTimeBetweenEmails = 150; // milliseconds, like your Python script
-      let processedCount = 0;
-      let successCount = 0;
-      let failedCount = 0;
-      let currentProjectIndex = 0;
-      let errors: string[] = [];
-
-      // Process each project (rotation like your Python script)
-      for (const projectId of campaign.projectIds) {
-        const projectUsers = campaign.selectedUsers[projectId] || [];
-        
-        updateCampaign({ currentProject: projectId });
-        setCampaignStats(prev => prev ? { ...prev, currentProject: projectId } : null);
-
-        // Process users in batches
-        for (let i = 0; i < projectUsers.length; i += campaign.batchSize) {
-          const batch = projectUsers.slice(i, i + campaign.batchSize);
-          const currentBatch = Math.floor(processedCount / campaign.batchSize) + 1;
-          
-          updateCampaign({ currentBatch });
-          
-          // Process each user in the batch
-          for (const userId of batch) {
-            const user = users[projectId]?.find(u => u.uid === userId);
-            if (!user) continue;
-
-            try {
-              // Simulate email sending with realistic success/failure rates
-              await delay(waitTimeBetweenEmails);
-              
-              const isSuccess = Math.random() > 0.08; // 92% success rate
-              
-              if (isSuccess) {
-                successCount++;
-                console.log(`✅ Password reset sent to ${user.email} via ${projects.find(p => p.id === projectId)?.name}`);
-              } else {
-                failedCount++;
-                errors.push(`Failed to send to ${user.email}: Network timeout`);
-                console.log(`❌ Failed to send to ${user.email}`);
-              }
-              
-              processedCount++;
-              
-              // Update progress
-              updateCampaign({
-                processed: processedCount,
-                successful: successCount,
-                failed: failedCount,
-                errors: [...errors],
-              });
-
-              // Update stats
-              const remaining = totalUsers - processedCount;
-              const estimatedTime = remaining * waitTimeBetweenEmails;
-              
-              setCampaignStats(prev => prev ? {
-                ...prev,
-                emailsSent: successCount,
-                emailsFailed: failedCount,
-                currentBatch,
-                estimatedTimeRemaining: estimatedTime,
-              } : null);
-
-            } catch (error) {
-              failedCount++;
-              errors.push(`Error sending to ${user.email}: ${error}`);
-              processedCount++;
-              
-              updateCampaign({
-                processed: processedCount,
-                successful: successCount,
-                failed: failedCount,
-                errors: [...errors],
-              });
-            }
-          }
-          
-          // Wait between batches (like your Python script)
-          if (i + campaign.batchSize < projectUsers.length) {
-            await delay(200);
-          }
-        }
-        
-        currentProjectIndex++;
-      }
-
-      // Mark campaign as completed
-      updateCampaign({ 
-        status: 'completed',
-        completedAt: new Date().toISOString(),
+      console.log(`Starting campaign ${campaignId}...`);
+      
+      // Make real API call to start password reset campaign
+      const response = await apiCall(`/campaigns/${campaignId}/start`, {
+        method: 'POST',
+        body: JSON.stringify({
+          projectIds: campaign.projectIds,
+          selectedUsers: campaign.selectedUsers,
+          batchSize: campaign.batchSize,
+          workers: campaign.workers,
+        }),
       });
       
-      setCampaignStats(null);
+      console.log('Campaign started successfully:', response);
+      
+      // Update campaign status
+      setCampaigns(prev => prev.map(c => 
+        c.id === campaignId ? { ...c, status: 'running' as const, startedAt: new Date().toISOString() } : c
+      ));
+      setCurrentCampaign(prev => prev ? { ...prev, status: 'running', startedAt: new Date().toISOString() } : null);
+      
+      // Set up polling for campaign progress
+      const pollProgress = setInterval(async () => {
+        try {
+          const progressResponse = await apiCall(`/campaigns/${campaignId}/progress`);
+          
+          setCampaigns(prev => prev.map(c => 
+            c.id === campaignId ? { ...c, ...progressResponse } : c
+          ));
+          setCurrentCampaign(prev => prev ? { ...prev, ...progressResponse } : null);
+          
+          if (progressResponse.status === 'completed' || progressResponse.status === 'failed') {
+            clearInterval(pollProgress);
+            setCampaignStats(null);
+          } else {
+            setCampaignStats({
+              emailsSent: progressResponse.successful,
+              emailsFailed: progressResponse.failed,
+              currentProject: progressResponse.currentProject,
+              currentBatch: progressResponse.currentBatch,
+              estimatedTimeRemaining: progressResponse.estimatedTimeRemaining || 0,
+            });
+          }
+        } catch (error) {
+          console.error('Error polling campaign progress:', error);
+          clearInterval(pollProgress);
+        }
+      }, 2000); // Poll every 2 seconds
       
     } catch (error) {
-      updateCampaign({ 
-        status: 'failed',
-        errors: [...campaign.errors, `Campaign failed: ${error}`],
-      });
-      setCampaignStats(null);
+      console.error('Error starting campaign:', error);
+      setCampaigns(prev => prev.map(c => 
+        c.id === campaignId ? { ...c, status: 'failed' as const } : c
+      ));
+      setCurrentCampaign(prev => prev ? { ...prev, status: 'failed' } : null);
+      throw error;
     }
   };
 
-  const pauseCampaign = (campaignId: string) => {
-    setCampaigns(prev => prev.map(c => 
-      c.id === campaignId ? { ...c, status: 'paused' as const } : c
-    ));
-    setCurrentCampaign(prev => prev ? { ...prev, status: 'paused' } : null);
+  const pauseCampaign = async (campaignId: string) => {
+    try {
+      await apiCall(`/campaigns/${campaignId}/pause`, {
+        method: 'POST',
+      });
+      
+      setCampaigns(prev => prev.map(c => 
+        c.id === campaignId ? { ...c, status: 'paused' as const } : c
+      ));
+      setCurrentCampaign(prev => prev ? { ...prev, status: 'paused' } : null);
+    } catch (error) {
+      console.error('Error pausing campaign:', error);
+      throw error;
+    }
   };
 
-  const resumeCampaign = (campaignId: string) => {
-    setCampaigns(prev => prev.map(c => 
-      c.id === campaignId ? { ...c, status: 'running' as const } : c
-    ));
-    setCurrentCampaign(prev => prev ? { ...prev, status: 'running' } : null);
+  const resumeCampaign = async (campaignId: string) => {
+    try {
+      await apiCall(`/campaigns/${campaignId}/resume`, {
+        method: 'POST',
+      });
+      
+      setCampaigns(prev => prev.map(c => 
+        c.id === campaignId ? { ...c, status: 'running' as const } : c
+      ));
+      setCurrentCampaign(prev => prev ? { ...prev, status: 'running' } : null);
+    } catch (error) {
+      console.error('Error resuming campaign:', error);
+      throw error;
+    }
   };
 
   const updateTemplate = (projectId: string, template: string) => {
@@ -417,10 +374,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const testEmailSend = async (projectId: string, email: string): Promise<boolean> => {
     try {
-      await delay(1000); // Simulate email send
-      const success = Math.random() > 0.1; // 90% success rate for testing
-      return success;
+      const response = await apiCall(`/projects/${projectId}/test-email`, {
+        method: 'POST',
+        body: JSON.stringify({ email }),
+      });
+      
+      return response.success;
     } catch (error) {
+      console.error('Error testing email send:', error);
       return false;
     }
   };
