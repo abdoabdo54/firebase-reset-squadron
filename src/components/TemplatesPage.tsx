@@ -1,7 +1,7 @@
 
 import { useState } from 'react';
 import { useEnhancedApp } from '@/contexts/EnhancedAppContext';
-import { FileText, Eye, Save, Sparkles, Bot, Wand2, Zap } from 'lucide-react';
+import { FileText, Eye, Save, Sparkles, Bot, Wand2, Zap, Mail, Type, FileCode } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -9,6 +9,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 
 export const TemplatesPage = () => {
@@ -16,16 +17,18 @@ export const TemplatesPage = () => {
   const { toast } = useToast();
   const [selectedProject, setSelectedProject] = useState<string>('');
   const [currentTemplate, setCurrentTemplate] = useState('');
+  const [currentSubject, setCurrentSubject] = useState('');
+  const [currentFrom, setCurrentFrom] = useState('');
   const [showPreview, setShowPreview] = useState(false);
-  const [templates, setTemplates] = useState<{[key: string]: string}>({});
+  const [templates, setTemplates] = useState<{[key: string]: {template: string, subject: string, from: string}}>({});
   
   // AI Generation states
   const [isGenerating, setIsGenerating] = useState(false);
+  const [generatingType, setGeneratingType] = useState<'template' | 'subject' | 'from' | null>(null);
   const [geminiApiKey, setGeminiApiKey] = useState('');
   const [gptApiKey, setGptApiKey] = useState('');
   const [selectedAI, setSelectedAI] = useState<'gemini' | 'gpt'>('gemini');
   const [customPrompt, setCustomPrompt] = useState('');
-  const [generatedSubject, setGeneratedSubject] = useState('');
 
   // Filter projects by active profile
   const activeProjects = projects.filter(p => 
@@ -34,20 +37,36 @@ export const TemplatesPage = () => {
 
   const handleProjectChange = (projectId: string) => {
     setSelectedProject(projectId);
-    setCurrentTemplate(templates[projectId] || '');
+    const saved = templates[projectId];
+    if (saved) {
+      setCurrentTemplate(saved.template || '');
+      setCurrentSubject(saved.subject || '');
+      setCurrentFrom(saved.from || '');
+    } else {
+      setCurrentTemplate('');
+      setCurrentSubject('');
+      setCurrentFrom('');
+    }
   };
 
   const handleSave = () => {
     if (!selectedProject) return;
     
-    setTemplates(prev => ({ ...prev, [selectedProject]: currentTemplate }));
+    setTemplates(prev => ({ 
+      ...prev, 
+      [selectedProject]: {
+        template: currentTemplate,
+        subject: currentSubject,
+        from: currentFrom
+      }
+    }));
     toast({
       title: "Template Saved",
-      description: "Email template has been saved successfully.",
+      description: "Email template, subject, and from fields have been saved successfully.",
     });
   };
 
-  const generateWithAI = async () => {
+  const generateWithAI = async (type: 'template' | 'subject' | 'from') => {
     if (!selectedProject) {
       toast({
         title: "Error",
@@ -68,35 +87,68 @@ export const TemplatesPage = () => {
     }
 
     setIsGenerating(true);
+    setGeneratingType(type);
+    
     try {
       const project = activeProjects.find(p => p.id === selectedProject);
-      const basePrompt = `Generate a professional password reset email template for ${project?.name || 'our application'}. 
-      
-      Requirements:
-      - Professional and trustworthy tone
-      - Clear call-to-action
-      - Include {{reset_link}} placeholder for the reset link
-      - HTML format with inline CSS for email compatibility
-      - Avoid spam trigger words like "free", "urgent", "act now", "click here", "guaranteed"
-      - Include security best practices messaging
-      - Company branding friendly
-      - Mobile responsive design
-      - Use professional language without excessive exclamation marks
-      - Focus on user security and trust
-      - Include clear instructions for the user
-      
-      ${customPrompt ? `Additional requirements: ${customPrompt}` : ''}
-      
-      Generate both the email template and a professional subject line. Format the response as:
-      
-      SUBJECT: [subject line here]
-      
-      TEMPLATE:
-      [HTML template here]`;
+      let basePrompt = '';
+
+      switch (type) {
+        case 'template':
+          basePrompt = `Generate a professional password reset email template for ${project?.name || 'our application'}. 
+          
+          Requirements:
+          - Professional and trustworthy tone
+          - Clear call-to-action
+          - Include {{reset_link}} placeholder for the reset link
+          - HTML format with inline CSS for email compatibility
+          - Avoid spam trigger words like "free", "urgent", "act now", "click here", "guaranteed"
+          - Include security best practices messaging
+          - Company branding friendly
+          - Mobile responsive design
+          - Use professional language without excessive exclamation marks
+          - Focus on user security and trust
+          - Include clear instructions for the user
+          
+          ${customPrompt ? `Additional requirements: ${customPrompt}` : ''}
+          
+          Return only the HTML template without any additional text or formatting.`;
+          break;
+          
+        case 'subject':
+          basePrompt = `Generate a professional subject line for a password reset email from ${project?.name || 'our application'}.
+          
+          Requirements:
+          - Professional and trustworthy tone
+          - Clear and concise (under 50 characters)
+          - Avoid spam trigger words like "free", "urgent", "act now", "guaranteed"
+          - No excessive punctuation or caps
+          - Focus on security and trust
+          - Make it clear it's about password reset
+          
+          ${customPrompt ? `Additional requirements: ${customPrompt}` : ''}
+          
+          Return only the subject line without quotes or additional text.`;
+          break;
+          
+        case 'from':
+          basePrompt = `Generate a professional "from" field for a password reset email from ${project?.name || 'our application'}.
+          
+          Requirements:
+          - Professional format like "Company Name <noreply@domain.com>"
+          - Trustworthy sender name
+          - Use noreply or security related email prefix
+          - Avoid spam trigger words
+          - Professional appearance
+          
+          ${customPrompt ? `Additional requirements: ${customPrompt}` : ''}
+          
+          Return only the from field in the format "Display Name <email@domain.com>" without additional text.`;
+          break;
+      }
 
       let response;
-      let htmlTemplate = '';
-      let subject = '';
+      let content = '';
 
       if (selectedAI === 'gemini') {
         response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=${apiKey}`, {
@@ -114,26 +166,14 @@ export const TemplatesPage = () => {
               temperature: 0.7,
               topK: 40,
               topP: 0.95,
-              maxOutputTokens: 2048,
+              maxOutputTokens: type === 'template' ? 2048 : 256,
             }
           }),
         });
 
         const data = await response.json();
         if (data.candidates && data.candidates[0]) {
-          const content = data.candidates[0].content.parts[0].text;
-          // Extract subject and template from the response
-          const subjectMatch = content.match(/SUBJECT:\s*(.+)/i);
-          if (subjectMatch) {
-            subject = subjectMatch[1].trim();
-          }
-          // Extract HTML template
-          const templateMatch = content.match(/TEMPLATE:\s*([\s\S]+)/i);
-          if (templateMatch) {
-            htmlTemplate = templateMatch[1].trim();
-          } else {
-            htmlTemplate = content;
-          }
+          content = data.candidates[0].content.parts[0].text.trim();
         }
       } else {
         response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -147,7 +187,7 @@ export const TemplatesPage = () => {
             messages: [
               {
                 role: 'system',
-                content: 'You are a professional email template designer. Generate clean, professional HTML email templates with inline CSS that avoid spam triggers and focus on user security.'
+                content: 'You are a professional email template designer. Generate clean, professional content that avoids spam triggers and focuses on user security.'
               },
               {
                 role: 'user',
@@ -155,48 +195,47 @@ export const TemplatesPage = () => {
               }
             ],
             temperature: 0.7,
-            max_tokens: 2048,
+            max_tokens: type === 'template' ? 2048 : 256,
           }),
         });
 
         const data = await response.json();
         if (data.choices && data.choices[0]) {
-          const content = data.choices[0].message.content;
-          // Extract subject and template from the response
-          const subjectMatch = content.match(/SUBJECT:\s*(.+)/i);
-          if (subjectMatch) {
-            subject = subjectMatch[1].trim();
-          }
-          // Extract HTML template
-          const templateMatch = content.match(/TEMPLATE:\s*([\s\S]+)/i);
-          if (templateMatch) {
-            htmlTemplate = templateMatch[1].trim();
-          } else {
-            htmlTemplate = content;
-          }
+          content = data.choices[0].message.content.trim();
         }
       }
 
-      if (htmlTemplate) {
-        setCurrentTemplate(htmlTemplate);
-        setGeneratedSubject(subject || 'Password Reset Request');
+      if (content) {
+        switch (type) {
+          case 'template':
+            setCurrentTemplate(content);
+            break;
+          case 'subject':
+            setCurrentSubject(content);
+            break;
+          case 'from':
+            setCurrentFrom(content);
+            break;
+        }
+        
         toast({
-          title: "Template Generated Successfully! ✨",
-          description: `Professional email template generated using ${selectedAI === 'gemini' ? 'Gemini' : 'GPT'} AI.`,
+          title: `${type.charAt(0).toUpperCase() + type.slice(1)} Generated Successfully! ✨`,
+          description: `Professional ${type} generated using ${selectedAI === 'gemini' ? 'Gemini' : 'GPT'} AI.`,
         });
       } else {
-        throw new Error('No template generated');
+        throw new Error('No content generated');
       }
 
     } catch (error) {
       console.error('AI Generation failed:', error);
       toast({
         title: "Generation Failed",
-        description: "Failed to generate template. Please check your API key and try again.",
+        description: "Failed to generate content. Please check your API key and try again.",
         variant: "destructive",
       });
     } finally {
       setIsGenerating(false);
+      setGeneratingType(null);
     }
   };
 
@@ -209,7 +248,7 @@ export const TemplatesPage = () => {
         <h1 className="text-3xl font-bold text-white mb-2">AI-Powered Email Templates</h1>
         <p className="text-gray-400">
           Profile: <span className="text-blue-400 font-medium">{activeProfileName}</span> • 
-          Create professional HTML templates for password reset emails with AI assistance
+          Create professional email templates with AI assistance
         </p>
       </div>
 
@@ -238,12 +277,12 @@ export const TemplatesPage = () => {
 
       {selectedProject && (
         <>
-          {/* AI Generation Section */}
+          {/* AI Configuration */}
           <Card className="bg-gradient-to-r from-purple-900/50 to-blue-900/50 border-purple-500/50">
             <CardHeader>
               <CardTitle className="text-white flex items-center gap-2">
                 <Sparkles className="w-5 h-5 text-purple-400" />
-                AI Template Generator
+                AI Configuration
                 <Badge className="bg-purple-500/20 text-purple-400">Professional</Badge>
               </CardTitle>
             </CardHeader>
@@ -301,71 +340,116 @@ export const TemplatesPage = () => {
                   rows={3}
                 />
               </div>
-
-              {generatedSubject && (
-                <div className="bg-green-900/20 border border-green-500/30 p-4 rounded-lg">
-                  <Label className="text-green-400 text-sm font-medium">✨ Generated Subject Line:</Label>
-                  <p className="text-white font-medium mt-1">{generatedSubject}</p>
-                </div>
-              )}
-
-              <div className="flex items-center gap-4">
-                <Button
-                  onClick={generateWithAI}
-                  disabled={isGenerating}
-                  className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 flex-1 max-w-sm"
-                >
-                  {isGenerating ? (
-                    <>
-                      <div className="animate-spin w-4 h-4 mr-2 border-2 border-white border-t-transparent rounded-full" />
-                      Generating Template...
-                    </>
-                  ) : (
-                    <>
-                      <Wand2 className="w-4 h-4 mr-2" />
-                      Generate Professional Template
-                    </>
-                  )}
-                </Button>
-                <div className="text-gray-400 text-sm">
-                  <p>✓ Spam-free language</p>
-                  <p>✓ Professional tone</p>
-                  <p>✓ Security focused</p>
-                </div>
-              </div>
             </CardContent>
           </Card>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            <Card className="bg-gray-800 border-gray-700">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0">
-                <CardTitle className="text-white flex items-center gap-2">
-                  <FileText className="w-5 h-5" />
-                  HTML Template Editor
-                </CardTitle>
-                <div className="flex gap-2">
+          {/* AI Generation Tabs */}
+          <Tabs defaultValue="from" className="w-full">
+            <TabsList className="grid w-full grid-cols-3 bg-gray-800">
+              <TabsTrigger value="from" className="text-white data-[state=active]:bg-gray-700">
+                <Mail className="w-4 h-4 mr-2" />
+                From Field
+              </TabsTrigger>
+              <TabsTrigger value="subject" className="text-white data-[state=active]:bg-gray-700">
+                <Type className="w-4 h-4 mr-2" />
+                Subject Line
+              </TabsTrigger>
+              <TabsTrigger value="template" className="text-white data-[state=active]:bg-gray-700">
+                <FileCode className="w-4 h-4 mr-2" />
+                HTML Template
+              </TabsTrigger>
+            </TabsList>
+            
+            <TabsContent value="from" className="space-y-4">
+              <Card className="bg-gray-800 border-gray-700">
+                <CardHeader className="flex flex-row items-center justify-between">
+                  <CardTitle className="text-white">From Field Generator</CardTitle>
                   <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setShowPreview(!showPreview)}
-                    className="border-gray-600 text-gray-300 hover:bg-gray-700"
+                    onClick={() => generateWithAI('from')}
+                    disabled={isGenerating}
+                    className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
                   >
-                    <Eye className="w-4 h-4 mr-2" />
-                    {showPreview ? 'Hide Preview' : 'Show Preview'}
+                    {isGenerating && generatingType === 'from' ? (
+                      <>
+                        <div className="animate-spin w-4 h-4 mr-2 border-2 border-white border-t-transparent rounded-full" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Wand2 className="w-4 h-4 mr-2" />
+                        Generate From Field
+                      </>
+                    )}
                   </Button>
+                </CardHeader>
+                <CardContent>
+                  <Input
+                    value={currentFrom}
+                    onChange={(e) => setCurrentFrom(e.target.value)}
+                    placeholder="Company Name <noreply@company.com>"
+                    className="bg-gray-700 border-gray-600 text-white"
+                  />
+                </CardContent>
+              </Card>
+            </TabsContent>
+            
+            <TabsContent value="subject" className="space-y-4">
+              <Card className="bg-gray-800 border-gray-700">
+                <CardHeader className="flex flex-row items-center justify-between">
+                  <CardTitle className="text-white">Subject Line Generator</CardTitle>
                   <Button
-                    size="sm"
-                    onClick={handleSave}
-                    className="bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800"
+                    onClick={() => generateWithAI('subject')}
+                    disabled={isGenerating}
+                    className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
                   >
-                    <Save className="w-4 h-4 mr-2" />
-                    Save Template
+                    {isGenerating && generatingType === 'subject' ? (
+                      <>
+                        <div className="animate-spin w-4 h-4 mr-2 border-2 border-white border-t-transparent rounded-full" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Wand2 className="w-4 h-4 mr-2" />
+                        Generate Subject
+                      </>
+                    )}
                   </Button>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4">
+                </CardHeader>
+                <CardContent>
+                  <Input
+                    value={currentSubject}
+                    onChange={(e) => setCurrentSubject(e.target.value)}
+                    placeholder="Password Reset Request"
+                    className="bg-gray-700 border-gray-600 text-white"
+                  />
+                </CardContent>
+              </Card>
+            </TabsContent>
+            
+            <TabsContent value="template" className="space-y-4">
+              <Card className="bg-gray-800 border-gray-700">
+                <CardHeader className="flex flex-row items-center justify-between">
+                  <CardTitle className="text-white">HTML Template Generator</CardTitle>
+                  <Button
+                    onClick={() => generateWithAI('template')}
+                    disabled={isGenerating}
+                    className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
+                  >
+                    {isGenerating && generatingType === 'template' ? (
+                      <>
+                        <div className="animate-spin w-4 h-4 mr-2 border-2 border-white border-t-transparent rounded-full" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Wand2 className="w-4 h-4 mr-2" />
+                        Generate Template
+                      </>
+                    )}
+                  </Button>
+                </CardHeader>
+                <CardContent>
+                  <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4 mb-4">
                     <h4 className="text-blue-400 font-medium mb-2">Template Variables</h4>
                     <p className="text-gray-300 text-sm">
                       Use <code className="bg-gray-700 px-2 py-1 rounded text-blue-300">{'{{reset_link}}'}</code> in your template. 
@@ -376,28 +460,60 @@ export const TemplatesPage = () => {
                     value={currentTemplate}
                     onChange={(e) => setCurrentTemplate(e.target.value)}
                     placeholder="Enter your HTML template here or generate one with AI..."
-                    className="min-h-[400px] bg-gray-700 border-gray-600 text-white font-mono text-sm"
+                    className="min-h-[300px] bg-gray-700 border-gray-600 text-white font-mono text-sm"
                   />
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
+
+          {/* Save and Preview */}
+          <div className="flex gap-4">
+            <Button
+              onClick={handleSave}
+              className="bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800"
+            >
+              <Save className="w-4 h-4 mr-2" />
+              Save All Fields
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => setShowPreview(!showPreview)}
+              className="border-gray-600 text-gray-300 hover:bg-gray-700"
+            >
+              <Eye className="w-4 h-4 mr-2" />
+              {showPreview ? 'Hide Preview' : 'Show Preview'}
+            </Button>
+          </div>
+
+          {/* Preview */}
+          {showPreview && (
+            <Card className="bg-gray-800 border-gray-700">
+              <CardHeader>
+                <CardTitle className="text-white flex items-center gap-2">
+                  <Eye className="w-5 h-5" />
+                  Email Preview
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="bg-gray-700 p-4 rounded-lg">
+                  <div className="text-sm text-gray-400 mb-2">From:</div>
+                  <div className="text-white">{currentFrom || 'No from field set'}</div>
+                </div>
+                <div className="bg-gray-700 p-4 rounded-lg">
+                  <div className="text-sm text-gray-400 mb-2">Subject:</div>
+                  <div className="text-white">{currentSubject || 'No subject set'}</div>
+                </div>
+                <div className="bg-white rounded-lg p-4 min-h-[400px] shadow-inner">
+                  {currentTemplate ? (
+                    <div dangerouslySetInnerHTML={{ __html: previewTemplate }} />
+                  ) : (
+                    <div className="text-gray-500 text-center py-8">No template content</div>
+                  )}
                 </div>
               </CardContent>
             </Card>
-
-            {showPreview && (
-              <Card className="bg-gray-800 border-gray-700">
-                <CardHeader>
-                  <CardTitle className="text-white flex items-center gap-2">
-                    <Eye className="w-5 h-5" />
-                    Live Preview
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="bg-white rounded-lg p-4 min-h-[400px] shadow-inner">
-                    <div dangerouslySetInnerHTML={{ __html: previewTemplate }} />
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-          </div>
+          )}
         </>
       )}
 

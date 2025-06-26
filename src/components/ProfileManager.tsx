@@ -1,5 +1,5 @@
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Plus, Edit, Trash2, Download, Upload, Users, FolderOpen } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -9,26 +9,26 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { Profile, localStorageService } from '@/services/LocalStorageService';
+import { useEnhancedApp } from '@/contexts/EnhancedAppContext';
 
-interface ProfileManagerProps {
-  profiles: Profile[];
-  activeProfile?: string;
-  onProfileChange: (profileId: string) => void;
-  onProfilesUpdate: (profiles: Profile[]) => void;
-  projectCounts: { [profileId: string]: number };
-}
-
-export const ProfileManager = ({ 
-  profiles, 
-  activeProfile, 
-  onProfileChange, 
-  onProfilesUpdate,
-  projectCounts 
-}: ProfileManagerProps) => {
+export const ProfileManager = () => {
   const { toast } = useToast();
+  const { 
+    profiles, 
+    projects, 
+    activeProfile, 
+    setActiveProfile, 
+    addProfile, 
+    removeProfile 
+  } = useEnhancedApp();
+  
   const [showCreateDialog, setShowCreateDialog] = useState(false);
-  const [editingProfile, setEditingProfile] = useState<Profile | null>(null);
   const [formData, setFormData] = useState({ name: '', description: '' });
+
+  // Count projects per profile
+  const getProjectCount = (profileId: string) => {
+    return projects.filter(p => p.profileId === profileId).length;
+  };
 
   const handleCreateProfile = () => {
     if (!formData.name.trim()) {
@@ -40,28 +40,18 @@ export const ProfileManager = ({
       return;
     }
 
-    const newProfile: Profile = {
-      id: Date.now().toString(),
+    addProfile({
       name: formData.name,
       description: formData.description,
-      createdAt: new Date().toISOString(),
       projectIds: [],
-    };
-
-    const updatedProfiles = [...profiles, newProfile];
-    onProfilesUpdate(updatedProfiles);
-    
-    // Save to localStorage
-    const data = localStorageService.loadData();
-    data.profiles = updatedProfiles;
-    localStorageService.saveData(data);
+    });
 
     setFormData({ name: '', description: '' });
     setShowCreateDialog(false);
     
     toast({
       title: "Profile Created",
-      description: `Profile "${newProfile.name}" has been created successfully.`,
+      description: `Profile "${formData.name}" has been created successfully.`,
     });
   };
 
@@ -70,22 +60,8 @@ export const ProfileManager = ({
       return;
     }
 
-    const updatedProfiles = profiles.filter(p => p.id !== profileId);
-    onProfilesUpdate(updatedProfiles);
+    removeProfile(profileId);
     
-    // Save to localStorage
-    const data = localStorageService.loadData();
-    data.profiles = updatedProfiles;
-    // Remove profile association from projects
-    data.projects = data.projects.map(p => 
-      p.profileId === profileId ? { ...p, profileId: undefined } : p
-    );
-    localStorageService.saveData(data);
-
-    if (activeProfile === profileId && updatedProfiles.length > 0) {
-      onProfileChange(updatedProfiles[0].id);
-    }
-
     toast({
       title: "Profile Deleted",
       description: "Profile has been deleted successfully.",
@@ -106,7 +82,6 @@ export const ProfileManager = ({
 
     try {
       const data = await localStorageService.importData(file);
-      onProfilesUpdate(data.profiles);
       
       toast({
         title: "Data Imported",
@@ -172,7 +147,7 @@ export const ProfileManager = ({
                   ? 'bg-gradient-to-r from-purple-900/50 to-blue-900/50 border-purple-500/50 shadow-lg' 
                   : 'bg-gray-800 border-gray-700 hover:bg-gray-750'
               }`}
-              onClick={() => onProfileChange(profile.id)}
+              onClick={() => setActiveProfile(profile.id)}
             >
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-lg font-semibold text-white flex items-center gap-2">
@@ -197,7 +172,7 @@ export const ProfileManager = ({
                 <div className="flex items-center justify-between">
                   <Badge className="bg-blue-500/20 text-blue-400 flex items-center gap-1">
                     <FolderOpen className="w-3 h-3" />
-                    {projectCounts[profile.id] || 0} projects
+                    {getProjectCount(profile.id)} projects
                   </Badge>
                   {activeProfile === profile.id && (
                     <Badge className="bg-green-500/20 text-green-400">

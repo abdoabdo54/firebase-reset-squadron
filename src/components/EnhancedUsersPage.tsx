@@ -1,380 +1,329 @@
 
 import { useState, useEffect } from 'react';
 import { useEnhancedApp } from '@/contexts/EnhancedAppContext';
-import { Search, Users, RefreshCw, CheckSquare, Square, Upload, Trash2, Download, UserX } from 'lucide-react';
+import { Users, Upload, Trash2, Search, Filter, UserX, RefreshCw } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
-import { UserImportModal } from './UserImportModal';
+import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
+import { UserImportModal } from './UserImportModal';
 
 export const EnhancedUsersPage = () => {
   const { 
     projects, 
     users, 
+    profiles, 
+    activeProfile, 
     loadUsers, 
-    bulkDeleteUsers, 
-    importUsers, 
     deleteUser,
-    profiles,
-    activeProfile 
+    bulkDeleteUsers, 
+    loading 
   } = useEnhancedApp();
   const { toast } = useToast();
-  const [selectedProject, setSelectedProject] = useState<string>('');
+  
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedProject, setSelectedProject] = useState<string>('');
   const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
+  const [loadingUsers, setLoadingUsers] = useState<{[key: string]: boolean}>({});
 
   // Filter projects by active profile
   const activeProjects = projects.filter(p => 
-    !activeProfile || p.profileId === activeProfile
+    (!activeProfile || p.profileId === activeProfile) && p.status === 'active'
   );
 
-  const currentUsers = selectedProject ? users[selectedProject] || [] : [];
-  const filteredUsers = currentUsers.filter(user =>
-    user.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (user.displayName && user.displayName.toLowerCase().includes(searchTerm.toLowerCase()))
-  );
+  const activeProfileName = profiles.find(p => p.id === activeProfile)?.name || 'All Projects';
 
-  const handleLoadUsers = async () => {
-    if (!selectedProject) return;
-    
-    setLoading(true);
+  // Load users for all active projects on mount
+  useEffect(() => {
+    const loadAllUsers = async () => {
+      for (const project of activeProjects) {
+        if (!users[project.id]) {
+          setLoadingUsers(prev => ({ ...prev, [project.id]: true }));
+          try {
+            await loadUsers(project.id);
+          } catch (error) {
+            console.error(`Failed to load users for project ${project.name}:`, error);
+          } finally {
+            setLoadingUsers(prev => ({ ...prev, [project.id]: false }));
+          }
+        }
+      }
+    };
+
+    if (activeProjects.length > 0) {
+      loadAllUsers();
+    }
+  }, [activeProjects, loadUsers]);
+
+  const handleRefreshUsers = async (projectId: string) => {
+    setLoadingUsers(prev => ({ ...prev, [projectId]: true }));
     try {
-      await loadUsers(selectedProject);
-      const loadedUsers = users[selectedProject] || [];
+      await loadUsers(projectId);
       toast({
-        title: "Users loaded",
-        description: `Successfully loaded ${loadedUsers.length} users.`,
+        title: "Users Refreshed",
+        description: "User list has been updated successfully.",
       });
     } catch (error) {
-      console.error('Failed to load users:', error);
       toast({
-        title: "Failed to load users",
-        description: "Please check your project configuration and try again.",
+        title: "Error",
+        description: "Failed to refresh users.",
         variant: "destructive",
       });
     } finally {
-      setLoading(false);
+      setLoadingUsers(prev => ({ ...prev, [projectId]: false }));
     }
   };
 
-  const handleBulkDeleteUsers = async () => {
-    if (!selectedProject) return;
-    
-    const userCount = selectedUsers.size > 0 ? selectedUsers.size : currentUsers.length;
-    if (userCount === 0) return;
-
-    const confirmMessage = selectedUsers.size > 0 
-      ? `Are you sure you want to delete ${selectedUsers.size} selected users?`
-      : `Are you sure you want to delete ALL ${currentUsers.length} users?`;
-
-    if (!confirm(confirmMessage)) return;
-
-    setIsDeleting(true);
-    try {
-      const userIds = selectedUsers.size > 0 ? Array.from(selectedUsers) : undefined;
-      await bulkDeleteUsers([selectedProject], userIds);
-      setSelectedUsers(new Set());
-    } catch (error) {
-      console.error('Failed to delete users:', error);
-    } finally {
-      setIsDeleting(false);
+  const handleDeleteUser = async (projectId: string, userId: string) => {
+    if (!confirm('Are you sure you want to delete this user?')) {
+      return;
     }
-  };
-
-  const handleDeleteSingleUser = async (userId: string) => {
-    if (!confirm('Are you sure you want to delete this user?')) return;
 
     try {
-      await deleteUser(selectedProject, userId);
+      await deleteUser(projectId, userId);
     } catch (error) {
       console.error('Failed to delete user:', error);
     }
   };
 
-  const handleSelectAll = () => {
-    if (selectedUsers.size === filteredUsers.length) {
+  const handleBulkDelete = async () => {
+    if (selectedUsers.size === 0) {
+      toast({
+        title: "No Users Selected",
+        description: "Please select users to delete.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to delete ${selectedUsers.size} selected users?`)) {
+      return;
+    }
+
+    try {
+      const projectIds = selectedProject ? [selectedProject] : activeProjects.map(p => p.id);
+      await bulkDeleteUsers(projectIds, Array.from(selectedUsers));
       setSelectedUsers(new Set());
-    } else {
-      setSelectedUsers(new Set(filteredUsers.map(user => user.uid)));
+    } catch (error) {
+      console.error('Failed to bulk delete users:', error);
     }
   };
 
-  const handleUserSelect = (uid: string, checked: boolean) => {
+  const toggleUserSelection = (userId: string) => {
     const newSelected = new Set(selectedUsers);
-    if (checked) {
-      newSelected.add(uid);
+    if (newSelected.has(userId)) {
+      newSelected.delete(userId);
     } else {
-      newSelected.delete(uid);
+      newSelected.add(userId);
     }
     setSelectedUsers(newSelected);
   };
 
-  const exportUsers = () => {
-    if (currentUsers.length === 0) return;
-    
-    const csvContent = [
-      'Email,Display Name,Email Verified,Disabled,Created At',
-      ...currentUsers.map(user => 
-        `${user.email},${user.displayName || ''},${user.emailVerified},${user.disabled},${user.createdAt || ''}`
-      )
-    ].join('\n');
-    
-    const blob = new Blob([csvContent], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `users_${selectedProject}_${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
-    window.URL.revokeObjectURL(url);
+  const getFilteredUsers = () => {
+    const projectsToShow = selectedProject ? [selectedProject] : activeProjects.map(p => p.id);
+    const allUsers = [];
+
+    for (const projectId of projectsToShow) {
+      const projectUsers = users[projectId] || [];
+      const project = projects.find(p => p.id === projectId);
+      
+      const filteredUsers = projectUsers.filter(user =>
+        user.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        user.displayName?.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+
+      allUsers.push(...filteredUsers.map(user => ({ ...user, projectId, projectName: project?.name })));
+    }
+
+    return allUsers;
   };
 
-  useEffect(() => {
-    setSelectedUsers(new Set());
-    setSearchTerm('');
-  }, [selectedProject]);
-
-  const selectedProject_obj = activeProjects.find(p => p.id === selectedProject);
-  const activeProfileName = profiles.find(p => p.id === activeProfile)?.name || 'All Projects';
+  const filteredUsers = getFilteredUsers();
 
   return (
     <div className="p-8 space-y-8">
-      <div>
-        <h1 className="text-3xl font-bold text-white mb-2">Enhanced User Management</h1>
-        <p className="text-gray-400">
-          Profile: <span className="text-blue-400 font-medium">{activeProfileName}</span> • 
-          Load, import, and manage users from your Firebase projects
-        </p>
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-3xl font-bold text-white mb-2">User Management</h1>
+          <p className="text-gray-400">
+            Profile: <span className="text-blue-400 font-medium">{activeProfileName}</span> • 
+            Manage Firebase Authentication users across your projects
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button
+            onClick={() => setShowImportModal(true)}
+            className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
+          >
+            <Upload className="w-4 h-4 mr-2" />
+            Import Users
+          </Button>
+          {selectedUsers.size > 0 && (
+            <Button
+              onClick={handleBulkDelete}
+              variant="destructive"
+              className="bg-red-600 hover:bg-red-700"
+            >
+              <Trash2 className="w-4 h-4 mr-2" />
+              Delete Selected ({selectedUsers.size})
+            </Button>
+          )}
+        </div>
       </div>
 
-      <Card className="bg-gray-800 border-gray-700">
-        <CardHeader>
-          <CardTitle className="text-white">Project Selection</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex gap-4">
-            <div className="flex-1">
-              <Select value={selectedProject} onValueChange={setSelectedProject}>
-                <SelectTrigger className="bg-gray-700 border-gray-600 text-white">
-                  <SelectValue placeholder="Select a Firebase project from current profile" />
-                </SelectTrigger>
-                <SelectContent className="bg-gray-700 border-gray-600">
-                  {activeProjects.map((project) => (
-                    <SelectItem key={project.id} value={project.id} className="text-white hover:bg-gray-600">
-                      <div className="flex items-center gap-2">
-                        <div className={`w-2 h-2 rounded-full ${
-                          project.status === 'active' ? 'bg-green-500' :
-                          project.status === 'error' ? 'bg-red-500' : 'bg-yellow-500'
-                        }`} />
-                        {project.name}
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <Button
-              onClick={handleLoadUsers}
-              disabled={!selectedProject || loading}
-              className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800"
-            >
-              {loading ? (
-                <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-              ) : (
-                <RefreshCw className="w-4 h-4 mr-2" />
-              )}
-              Load Users
-            </Button>
-          </div>
-          
-          {selectedProject && (
-            <div className="flex gap-2">
-              <Button
-                onClick={() => setShowImportModal(true)}
-                variant="outline"
-                className="border-gray-600 text-gray-300 hover:bg-gray-700"
-              >
-                <Upload className="w-4 h-4 mr-2" />
-                Import Users
-              </Button>
-              <Button
-                onClick={exportUsers}
-                disabled={currentUsers.length === 0}
-                variant="outline"
-                className="border-gray-600 text-gray-300 hover:bg-gray-700"
-              >
-                <Download className="w-4 h-4 mr-2" />
-                Export CSV
-              </Button>
-              <Button
-                onClick={handleBulkDeleteUsers}
-                disabled={currentUsers.length === 0 || isDeleting}
-                variant="outline"
-                className="border-red-600 text-red-400 hover:bg-red-900/20"
-              >
-                {isDeleting ? (
-                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                ) : (
-                  <Trash2 className="w-4 h-4 mr-2" />
-                )}
-                {selectedUsers.size > 0 ? `Delete Selected (${selectedUsers.size})` : 'Delete All'}
-              </Button>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+          <Input
+            placeholder="Search users by email or name..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-10 bg-gray-800 border-gray-700 text-white"
+          />
+        </div>
+        <Select value={selectedProject} onValueChange={setSelectedProject}>
+          <SelectTrigger className="bg-gray-800 border-gray-700 text-white">
+            <SelectValue placeholder="All projects in profile" />
+          </SelectTrigger>
+          <SelectContent className="bg-gray-800 border-gray-700">
+            <SelectItem value="" className="text-white hover:bg-gray-700">All Projects</SelectItem>
+            {activeProjects.map((project) => (
+              <SelectItem key={project.id} value={project.id} className="text-white hover:bg-gray-700">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-green-500" />
+                  {project.name}
+                </div>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button
+          variant="outline"
+          onClick={() => {
+            if (selectedProject) {
+              handleRefreshUsers(selectedProject);
+            } else {
+              activeProjects.forEach(p => handleRefreshUsers(p.id));
+            }
+          }}
+          className="border-gray-600 text-gray-300 hover:bg-gray-700"
+        >
+          <RefreshCw className="w-4 h-4 mr-2" />
+          Refresh Users
+        </Button>
+      </div>
 
-      {selectedProject && currentUsers.length > 0 && (
+      {activeProjects.length === 0 ? (
+        <Card className="bg-gray-800 border-gray-700">
+          <CardContent className="py-12 text-center">
+            <Users className="w-12 h-12 text-gray-500 mx-auto mb-4" />
+            <h3 className="text-xl font-semibold text-white mb-2">No Active Projects</h3>
+            <p className="text-gray-400">
+              Add some Firebase projects to the current profile to manage users.
+            </p>
+          </CardContent>
+        </Card>
+      ) : (
         <Card className="bg-gray-800 border-gray-700">
           <CardHeader>
-            <div className="flex justify-between items-center">
-              <CardTitle className="text-white flex items-center gap-2">
+            <CardTitle className="text-white flex items-center justify-between">
+              <span className="flex items-center gap-2">
                 <Users className="w-5 h-5" />
                 Users ({filteredUsers.length})
-                {selectedProject_obj?.status === 'active' && (
-                  <Badge className="bg-green-500/20 text-green-400">Connected</Badge>
-                )}
-              </CardTitle>
-              <div className="flex items-center gap-4">
-                <span className="text-gray-400 text-sm">
-                  {selectedUsers.size} selected
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleSelectAll}
-                  className="border-gray-600 text-gray-300 hover:bg-gray-700"
-                >
-                  {selectedUsers.size === filteredUsers.length ? (
-                    <CheckSquare className="w-4 h-4 mr-2" />
-                  ) : (
-                    <Square className="w-4 h-4 mr-2" />
-                  )}
-                  {selectedUsers.size === filteredUsers.length ? 'Deselect All' : 'Select All'}
-                </Button>
+              </span>
+              <div className="flex gap-2">
+                {activeProjects.map(project => (
+                  <Badge key={project.id} className="bg-blue-500/20 text-blue-400">
+                    {project.name}: {users[project.id]?.length || 0}
+                  </Badge>
+                ))}
               </div>
-            </div>
+            </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-              <Input
-                placeholder="Search users by email or name..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10 bg-gray-700 border-gray-600 text-white"
-              />
-            </div>
-
-            <div className="max-h-96 overflow-y-auto space-y-2">
-              {filteredUsers.map((user) => (
-                <div
-                  key={user.uid}
-                  className="flex items-center justify-between p-4 bg-gray-700 rounded-lg hover:bg-gray-650 transition-colors"
-                >
-                  <div className="flex items-center gap-3">
-                    <Checkbox
-                      checked={selectedUsers.has(user.uid)}
-                      onCheckedChange={(checked) => handleUserSelect(user.uid, checked as boolean)}
-                    />
-                    <div>
-                      <h4 className="text-white font-medium">{user.email}</h4>
-                      {user.displayName && (
-                        <p className="text-gray-400 text-sm">{user.displayName}</p>
-                      )}
-                      {user.createdAt && (
-                        <p className="text-gray-500 text-xs">
-                          Created: {new Date(user.createdAt).toLocaleDateString()}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="flex gap-2">
-                      {user.emailVerified ? (
-                        <Badge variant="secondary" className="bg-green-500/20 text-green-400">
-                          Verified
-                        </Badge>
-                      ) : (
-                        <Badge variant="secondary" className="bg-yellow-500/20 text-yellow-400">
-                          Unverified
-                        </Badge>
-                      )}
-                      {user.disabled && (
-                        <Badge variant="secondary" className="bg-red-500/20 text-red-400">
-                          Disabled
-                        </Badge>
-                      )}
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => handleDeleteSingleUser(user.uid)}
-                      className="border-red-600 text-red-400 hover:bg-red-900/20"
+          <CardContent>
+            {filteredUsers.length > 0 ? (
+              <div className="space-y-4">
+                <div className="max-h-96 overflow-y-auto">
+                  {filteredUsers.map((user) => (
+                    <div
+                      key={`${user.projectId}-${user.uid}`}
+                      className="flex items-center gap-4 p-4 rounded-lg bg-gray-700 hover:bg-gray-600 transition-colors"
                     >
-                      <UserX className="w-3 h-3" />
-                    </Button>
-                  </div>
+                      <Checkbox
+                        checked={selectedUsers.has(user.uid)}
+                        onCheckedChange={() => toggleUserSelection(user.uid)}
+                        className="border-gray-500"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <p className="font-medium text-white truncate">{user.email}</p>
+                          <Badge className="bg-gray-600 text-gray-300 text-xs">
+                            {user.projectName}
+                          </Badge>
+                        </div>
+                        {user.displayName && (
+                          <p className="text-sm text-gray-400">{user.displayName}</p>
+                        )}
+                        <div className="flex items-center gap-4 mt-2 text-xs text-gray-500">
+                          <span>UID: {user.uid}</span>
+                          <span className={`px-2 py-1 rounded ${
+                            user.emailVerified 
+                              ? 'bg-green-500/20 text-green-400' 
+                              : 'bg-red-500/20 text-red-400'
+                          }`}>
+                            {user.emailVerified ? 'Verified' : 'Unverified'}
+                          </span>
+                          <span className={`px-2 py-1 rounded ${
+                            user.disabled 
+                              ? 'bg-red-500/20 text-red-400' 
+                              : 'bg-green-500/20 text-green-400'
+                          }`}>
+                            {user.disabled ? 'Disabled' : 'Active'}
+                          </span>
+                        </div>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        onClick={() => handleDeleteUser(user.projectId, user.uid)}
+                        className="shrink-0"
+                      >
+                        <UserX className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+              </div>
+            ) : (
+              <div className="text-center py-8">
+                <Users className="w-12 h-12 text-gray-500 mx-auto mb-4" />
+                <h3 className="text-lg font-semibold text-white mb-2">No Users Found</h3>
+                <p className="text-gray-400">
+                  {searchTerm ? 'No users match your search criteria.' : 'No users found in the selected projects.'}
+                </p>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
 
-      {selectedProject && currentUsers.length === 0 && !loading && (
-        <Card className="bg-gray-800 border-gray-700">
-          <CardContent className="py-12 text-center">
-            <Users className="w-12 h-12 text-gray-500 mx-auto mb-4" />
-            <h3 className="text-xl font-semibold text-white mb-2">No Users Found</h3>
-            <p className="text-gray-400 mb-6">
-              Load users from Firebase or import them to get started.
-            </p>
-            <div className="flex gap-2 justify-center">
-              <Button
-                onClick={handleLoadUsers}
-                className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800"
-              >
-                <RefreshCw className="w-4 h-4 mr-2" />
-                Load from Firebase
-              </Button>
-              <Button
-                onClick={() => setShowImportModal(true)}
-                variant="outline"
-                className="border-gray-600 text-gray-300 hover:bg-gray-700"
-              >
-                <Upload className="w-4 h-4 mr-2" />
-                Import Users
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+      {/* Loading states */}
+      {Object.entries(loadingUsers).some(([_, loading]) => loading) && (
+        <div className="flex items-center justify-center py-4">
+          <div className="animate-spin w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full mr-2" />
+          <span className="text-gray-400">Loading users...</span>
+        </div>
       )}
 
-      {!selectedProject && (
-        <Card className="bg-gray-800 border-gray-700">
-          <CardContent className="py-12 text-center">
-            <Users className="w-12 h-12 text-gray-500 mx-auto mb-4" />
-            <h3 className="text-xl font-semibold text-white mb-2">Select a Project</h3>
-            <p className="text-gray-400">
-              Choose a Firebase project from the current profile to load and manage its users.
-            </p>
-          </CardContent>
-        </Card>
-      )}
-
-      {showImportModal && selectedProject && (
-        <UserImportModal
-          projectId={selectedProject}
-          onClose={() => setShowImportModal(false)}
-        />
-      )}
+      <UserImportModal
+        isOpen={showImportModal}
+        onClose={() => setShowImportModal(false)}
+        availableProjects={activeProjects}
+      />
     </div>
   );
 };
