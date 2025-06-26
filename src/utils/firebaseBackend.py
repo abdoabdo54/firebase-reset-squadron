@@ -1,3 +1,4 @@
+
 """
 FastAPI Backend Service for Firebase Operations
 Run this with: python src/utils/firebaseBackend.py
@@ -69,7 +70,16 @@ async def health_check():
         "status": "healthy", 
         "timestamp": datetime.now().isoformat(),
         "message": "Backend is running successfully",
-        "projects_connected": len(firebase_apps)
+        "projects_connected": len(firebase_apps),
+        "available_endpoints": [
+            "GET /health",
+            "POST /projects",
+            "DELETE /projects/{project_id}",
+            "GET /projects/{project_id}/users",
+            "POST /projects/{project_id}/users/import",
+            "DELETE /projects/{project_id}/users",
+            "POST /projects/{project_id}/test-email"
+        ]
     }
 
 @app.post("/projects")
@@ -123,7 +133,7 @@ async def add_project(project: ProjectCreate):
             if project_id in firebase_apps:
                 firebase_admin.delete_app(firebase_apps[project_id])
                 del firebase_apps[project_id]
-            raise HTTPException(status_code=400, detail=f"Invalid API key: {str(e)}")
+            raise HTTPException(status_code=400, detail=f"Invalid API key or project configuration: {str(e)}")
         
         logger.info(f"Project {project_id} added successfully")
         return {"success": True, "project_id": project_id, "message": "Project added successfully"}
@@ -180,18 +190,31 @@ async def load_users(project_id: str):
         app = firebase_apps[project_id]
         users = []
         
-        # List all users using Firebase Admin SDK (matching your Python script)
+        # List all users using Firebase Admin SDK
         try:
             page = auth.list_users(app=app)
             while page:
                 for user in page.users:
+                    # Fix timestamp handling - convert to string if it exists
+                    created_at = None
+                    if user.user_metadata and user.user_metadata.creation_timestamp:
+                        # Check if it's already a string or needs conversion
+                        if hasattr(user.user_metadata.creation_timestamp, 'isoformat'):
+                            created_at = user.user_metadata.creation_timestamp.isoformat()
+                        else:
+                            # It might be a timestamp in milliseconds
+                            try:
+                                created_at = datetime.fromtimestamp(user.user_metadata.creation_timestamp / 1000).isoformat()
+                            except:
+                                created_at = str(user.user_metadata.creation_timestamp)
+                    
                     users.append({
                         "uid": user.uid,
                         "email": user.email or "",
                         "displayName": user.display_name,
                         "disabled": user.disabled,
                         "emailVerified": user.email_verified,
-                        "createdAt": user.user_metadata.creation_timestamp.isoformat() if user.user_metadata.creation_timestamp else None,
+                        "createdAt": created_at,
                     })
                 
                 # Get next page
@@ -231,23 +254,36 @@ async def import_users(project_id: str, user_import: UserImport):
             batch = []
             
             for email in batch_emails:
+                # Create consistent UID like in your working script
                 uid = hashlib.md5(email.encode()).hexdigest().lower()
                 user_record = auth.ImportUserRecord(email=email, uid=uid)
                 batch.append(user_record)
             
             # Import batch
-            results = auth.import_users(batch, app=app)
-            total_imported += results.success_count
+            try:
+                results = auth.import_users(batch, app=app)
+                total_imported += results.success_count
+                
+                logger.info(f"Batch {i//batch_size + 1}: {results.success_count} success, {results.failure_count} failures")
+                
+                if results.failure_count > 0:
+                    for error in results.errors:
+                        logger.warning(f"Import error at index {error.index}: {error.reason}")
+                        
+            except Exception as e:
+                logger.error(f"Failed to import batch: {str(e)}")
+                # Continue with next batch
+                continue
             
-            logger.info(f"Batch {i//batch_size + 1}: {results.success_count} success, {results.failure_count} failures")
-            
-            # Add delay between batches
+            # Add delay between batches (like in your working script)
             if i + batch_size < len(emails):
                 await asyncio.sleep(5)  # 5 second delay
         
         logger.info(f"Import completed: {total_imported} users imported")
         return {"imported": total_imported}
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to import users: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to import users: {str(e)}")
@@ -264,26 +300,37 @@ async def delete_all_users(project_id: str):
         app = firebase_apps[project_id]
         total_deleted = 0
         
-        # List and delete users in batches
+        # List and delete users in batches (like in your working script)
         batch_size = 1000
         
         while True:
-            page = auth.list_users(max_results=batch_size, app=app)
-            if not page.users:
+            try:
+                page = auth.list_users(max_results=batch_size, app=app)
+                if not page.users:
+                    break
+                
+                uids = [user.uid for user in page.users]
+                results = auth.delete_users(uids, app=app)
+                total_deleted += results.success_count
+                
+                logger.info(f"Deleted {results.success_count} users, {results.failure_count} failures")
+                
+                if results.failure_count > 0:
+                    for error in results.errors:
+                        logger.warning(f"Delete error: {error.reason}")
+                
+                # Add delay between batches
+                await asyncio.sleep(5)
+                
+            except Exception as e:
+                logger.error(f"Error in delete batch: {str(e)}")
                 break
-            
-            uids = [user.uid for user in page.users]
-            results = auth.delete_users(uids, app=app)
-            total_deleted += results.success_count
-            
-            logger.info(f"Deleted {results.success_count} users, {results.failure_count} failures")
-            
-            # Add delay between batches
-            await asyncio.sleep(5)
         
         logger.info(f"Deletion completed: {total_deleted} users deleted")
         return {"deleted": total_deleted}
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to delete users: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to delete users: {str(e)}")
@@ -336,13 +383,14 @@ async def run_campaign(campaign_id: str, campaign: CampaignStart):
         # Process each project
         for project_id in campaign.projectIds:
             if project_id not in pyrebase_apps:
+                logger.warning(f"Project {project_id} not found in pyrebase apps")
                 continue
             
             active_campaigns[campaign_id]["currentProject"] = project_id
             pyrebase_auth = pyrebase_apps[project_id].auth()
             user_uids = campaign.selectedUsers.get(project_id, [])
             
-            # Get user emails from Firebase
+            # Get user emails from Firebase (like in your working script)
             app = firebase_apps[project_id]
             users_page = auth.list_users(app=app)
             user_emails = {}
@@ -379,7 +427,7 @@ async def run_campaign(campaign_id: str, campaign: CampaignStart):
                         "failed": failed,
                     })
                     
-                    # Wait between emails (100ms)
+                    # Wait between emails (like in your working script)
                     await asyncio.sleep(0.1)
                 
                 current_batch += 1
