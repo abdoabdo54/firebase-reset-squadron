@@ -77,8 +77,8 @@ export const useApp = () => {
   return context;
 };
 
-// Backend API base URL - you'll need to set this to your actual backend URL
-const API_BASE_URL = process.env.VITE_API_BASE_URL || 'http://localhost:8000';
+// Backend API base URL - using Vite's env variable
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
 // API helper functions
 const apiCall = async (endpoint: string, options: RequestInit = {}) => {
@@ -108,7 +108,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const addProject = async (projectData: Omit<FirebaseProject, 'id' | 'createdAt' | 'status'>) => {
     const newProject: FirebaseProject = {
       ...projectData,
-      id: Date.now().toString(),
+      id: projectData.serviceAccount?.project_id || Date.now().toString(),
       createdAt: new Date().toISOString(),
       status: 'loading',
     };

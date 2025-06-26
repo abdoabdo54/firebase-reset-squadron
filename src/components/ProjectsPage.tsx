@@ -15,6 +15,7 @@ export const ProjectsPage = () => {
   const [formData, setFormData] = useState({
     name: '',
     adminEmail: '',
+    apiKey: '',
     serviceAccount: null as File | null,
   });
 
@@ -28,7 +29,7 @@ export const ProjectsPage = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!formData.name || !formData.adminEmail || !formData.serviceAccount) {
+    if (!formData.name || !formData.adminEmail || !formData.apiKey || !formData.serviceAccount) {
       toast({
         title: "Error",
         description: "Please fill in all fields and upload a service account file.",
@@ -38,17 +39,18 @@ export const ProjectsPage = () => {
     }
 
     try {
-      // In a real app, you'd parse and validate the service account JSON
+      // Parse and validate the service account JSON
       const serviceAccountText = await formData.serviceAccount.text();
       const serviceAccount = JSON.parse(serviceAccountText);
       
-      addProject({
+      await addProject({
         name: formData.name,
         adminEmail: formData.adminEmail,
+        apiKey: formData.apiKey,
         serviceAccount,
       });
 
-      setFormData({ name: '', adminEmail: '', serviceAccount: null });
+      setFormData({ name: '', adminEmail: '', apiKey: '', serviceAccount: null });
       setShowAddForm(false);
       
       toast({
@@ -58,18 +60,26 @@ export const ProjectsPage = () => {
     } catch (error) {
       toast({
         title: "Error",
-        description: "Invalid service account file format.",
+        description: error instanceof Error ? error.message : "Failed to add project.",
         variant: "destructive",
       });
     }
   };
 
-  const handleRemoveProject = (id: string) => {
-    removeProject(id);
-    toast({
-      title: "Project Removed",
-      description: "Firebase project has been removed successfully.",
-    });
+  const handleRemoveProject = async (id: string) => {
+    try {
+      await removeProject(id);
+      toast({
+        title: "Project Removed",
+        description: "Firebase project has been removed successfully.",
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to remove project.",
+        variant: "destructive",
+      });
+    }
   };
 
   return (
@@ -120,6 +130,20 @@ export const ProjectsPage = () => {
               </div>
               
               <div>
+                <Label htmlFor="apiKey" className="text-gray-300">Firebase Web API Key</Label>
+                <Input
+                  id="apiKey"
+                  value={formData.apiKey}
+                  onChange={(e) => setFormData({ ...formData, apiKey: e.target.value })}
+                  placeholder="AIzaSyA..."
+                  className="bg-gray-700 border-gray-600 text-white"
+                />
+                <p className="text-xs text-gray-400 mt-1">
+                  Find this in Firebase Console → Project Settings → General → Web API Key
+                </p>
+              </div>
+              
+              <div>
                 <Label htmlFor="serviceAccount" className="text-gray-300">Service Account JSON</Label>
                 <div className="mt-2">
                   <input
@@ -139,6 +163,9 @@ export const ProjectsPage = () => {
                     {formData.serviceAccount ? formData.serviceAccount.name : 'Upload JSON File'}
                   </Button>
                 </div>
+                <p className="text-xs text-gray-400 mt-1">
+                  Download from Firebase Console → Project Settings → Service Accounts → Generate New Private Key
+                </p>
               </div>
 
               <div className="flex gap-2">
@@ -170,14 +197,20 @@ export const ProjectsPage = () => {
                 <Server className="w-5 h-5 text-blue-500" />
                 {project.name}
               </CardTitle>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => handleRemoveProject(project.id)}
-                className="text-red-400 hover:text-red-300 hover:bg-red-900/20"
-              >
-                <Trash2 className="w-4 h-4" />
-              </Button>
+              <div className="flex items-center gap-2">
+                <div className={`w-2 h-2 rounded-full ${
+                  project.status === 'active' ? 'bg-green-500' :
+                  project.status === 'error' ? 'bg-red-500' : 'bg-yellow-500'
+                }`} />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleRemoveProject(project.id)}
+                  className="text-red-400 hover:text-red-300 hover:bg-red-900/20"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
@@ -189,6 +222,16 @@ export const ProjectsPage = () => {
                   <p className="text-gray-400 text-sm">Project ID</p>
                   <p className="text-white font-mono text-sm">
                     {project.serviceAccount?.project_id || 'N/A'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-gray-400 text-sm">Status</p>
+                  <p className={`text-sm font-medium ${
+                    project.status === 'active' ? 'text-green-400' :
+                    project.status === 'error' ? 'text-red-400' : 'text-yellow-400'
+                  }`}>
+                    {project.status === 'active' ? 'Connected' :
+                     project.status === 'error' ? 'Connection Failed' : 'Connecting...'}
                   </p>
                 </div>
                 <div>
