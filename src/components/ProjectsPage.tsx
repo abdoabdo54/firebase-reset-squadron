@@ -1,6 +1,6 @@
 
 import { useState } from 'react';
-import { useApp } from '@/contexts/AppContext';
+import { useEnhancedApp } from '@/contexts/EnhancedAppContext';
 import { Plus, Server, Trash2, Upload, AlertCircle, CheckCircle, Clock } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -10,7 +10,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useToast } from '@/hooks/use-toast';
 
 export const ProjectsPage = () => {
-  const { projects, addProject, removeProject } = useApp();
+  const { projects, addProject, removeProject } = useEnhancedApp();
   const { toast } = useToast();
   const [showAddForm, setShowAddForm] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);

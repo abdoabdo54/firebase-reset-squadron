@@ -1,6 +1,6 @@
 
 import { useState } from 'react';
-import { useApp } from '@/contexts/AppContext';
+import { useEnhancedApp } from '@/contexts/EnhancedAppContext';
 import { FileText, Eye, Save } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -9,11 +9,12 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 
 export const TemplatesPage = () => {
-  const { projects, templates, updateTemplate } = useApp();
+  const { projects } = useEnhancedApp();
   const { toast } = useToast();
   const [selectedProject, setSelectedProject] = useState<string>('');
   const [currentTemplate, setCurrentTemplate] = useState('');
   const [showPreview, setShowPreview] = useState(false);
+  const [templates, setTemplates] = useState<{[key: string]: string}>({});
 
   const handleProjectChange = (projectId: string) => {
     setSelectedProject(projectId);
@@ -23,7 +24,7 @@ export const TemplatesPage = () => {
   const handleSave = () => {
     if (!selectedProject) return;
     
-    updateTemplate(selectedProject, currentTemplate);
+    setTemplates(prev => ({ ...prev, [selectedProject]: currentTemplate }));
     toast({
       title: "Template Saved",
       description: "Email template has been saved successfully.",
