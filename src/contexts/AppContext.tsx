@@ -1,4 +1,3 @@
-
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 
 interface FirebaseProject {
@@ -77,24 +76,37 @@ export const useApp = () => {
   return context;
 };
 
-// Backend API base URL - using Vite's env variable
+// Backend API base URL
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
 // API helper functions
 const apiCall = async (endpoint: string, options: RequestInit = {}) => {
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
-    ...options,
-  });
+  console.log(`API Call: ${options.method || 'GET'} ${API_BASE_URL}${endpoint}`);
   
-  if (!response.ok) {
-    throw new Error(`API call failed: ${response.statusText}`);
+  try {
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+      ...options,
+    });
+    
+    console.log(`API Response: ${response.status} ${response.statusText}`);
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`API Error Response: ${errorText}`);
+      throw new Error(`API call failed: ${response.status} ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    console.log('API Response Data:', data);
+    return data;
+  } catch (error) {
+    console.error('API Call Error:', error);
+    throw error;
   }
-  
-  return response.json();
 };
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
@@ -104,6 +116,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [currentCampaign, setCurrentCampaign] = useState<Campaign | null>(null);
   const [campaignStats, setCampaignStats] = useState<CampaignStats | null>(null);
   const [templates, setTemplates] = useState<{ [projectId: string]: string }>({});
+
+  // Test backend connection on startup
+  useEffect(() => {
+    const testConnection = async () => {
+      try {
+        console.log('Testing backend connection...');
+        await apiCall('/health');
+        console.log('Backend connection successful');
+      } catch (error) {
+        console.error('Backend connection failed:', error);
+      }
+    };
+    testConnection();
+  }, []);
 
   const addProject = async (projectData: Omit<FirebaseProject, 'id' | 'createdAt' | 'status'>) => {
     const newProject: FirebaseProject = {
@@ -116,6 +142,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setProjects(prev => [...prev, newProject]);
     
     try {
+      console.log('Adding project:', newProject.name);
+      
       // Make real API call to backend to add Firebase project
       const response = await apiCall('/projects', {
         method: 'POST',
@@ -188,7 +216,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       console.log(`Loading users for project ${projectId}...`);
       
-      // Make real API call to load users from Firebase
       const response = await apiCall(`/projects/${projectId}/users`);
       
       console.log(`Loaded ${response.users.length} users from Firebase`);
@@ -207,7 +234,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       console.log(`Importing ${emails.length} users to project ${projectId}...`);
       
-      // Make real API call to import users using Firebase Admin SDK
       const response = await apiCall(`/projects/${projectId}/users/import`, {
         method: 'POST',
         body: JSON.stringify({ emails }),
@@ -229,7 +255,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       console.log(`Deleting all users from project ${projectId}...`);
       
-      // Make real API call to delete all users using Firebase Admin SDK
       const response = await apiCall(`/projects/${projectId}/users`, {
         method: 'DELETE',
       });
@@ -276,7 +301,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       console.log(`Starting campaign ${campaignId}...`);
       
-      // Make real API call to start password reset campaign
       const response = await apiCall(`/campaigns/${campaignId}/start`, {
         method: 'POST',
         body: JSON.stringify({
@@ -289,7 +313,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       
       console.log('Campaign started successfully:', response);
       
-      // Update campaign status
       setCampaigns(prev => prev.map(c => 
         c.id === campaignId ? { ...c, status: 'running' as const, startedAt: new Date().toISOString() } : c
       ));
@@ -321,7 +344,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           console.error('Error polling campaign progress:', error);
           clearInterval(pollProgress);
         }
-      }, 2000); // Poll every 2 seconds
+      }, 2000);
       
     } catch (error) {
       console.error('Error starting campaign:', error);

@@ -1,19 +1,13 @@
 
 """
 FastAPI Backend Service for Firebase Operations
-This file serves as a reference implementation for the backend API
-that should be deployed separately to handle Firebase Admin SDK operations.
-
-Requirements:
-- pip install fastapi uvicorn firebase-admin pyrebase4
-- Service account JSON files stored securely
-- Environment variables for configuration
+Run this with: python src/utils/firebaseBackend.py
 """
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import firebase_admin
 from firebase_admin import credentials, auth
 import pyrebase
@@ -23,13 +17,18 @@ import os
 import asyncio
 import time
 from datetime import datetime
+import logging
 
-app = FastAPI()
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = FastAPI(title="Firebase Email Campaign Backend", version="1.0.0")
 
 # Enable CORS for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure this properly in production
+    allow_origins=["*"],  # In production, specify your frontend URL
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -57,13 +56,29 @@ class CampaignStart(BaseModel):
 class TestEmail(BaseModel):
     email: str
 
+@app.get("/")
+async def root():
+    return {"message": "Firebase Email Campaign Backend API", "status": "running"}
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+
 @app.post("/projects")
 async def add_project(project: ProjectCreate):
     """Add a new Firebase project"""
     try:
+        logger.info(f"Adding project: {project.name}")
+        
         project_id = project.serviceAccount.get('project_id')
         if not project_id:
             raise HTTPException(status_code=400, detail="Invalid service account - missing project_id")
+        
+        # Check if project already exists
+        if project_id in firebase_apps:
+            logger.warning(f"Project {project_id} already exists, removing old instance")
+            firebase_admin.delete_app(firebase_apps[project_id])
+            del firebase_apps[project_id]
         
         # Initialize Firebase Admin SDK
         cred = credentials.Certificate(project.serviceAccount)
@@ -74,20 +89,26 @@ async def add_project(project: ProjectCreate):
         pyrebase_config = {
             "apiKey": project.apiKey,
             "authDomain": f"{project_id}.firebaseapp.com",
-            "databaseURL": f"https://{project_id}.firebaseio.com",
+            "databaseURL": f"https://{project_id}-default-rtdb.firebaseio.com",
             "storageBucket": f"{project_id}.appspot.com",
         }
+        
         pyrebase_app = pyrebase.initialize_app(pyrebase_config)
         pyrebase_apps[project_id] = pyrebase_app
         
+        logger.info(f"Project {project_id} added successfully")
         return {"success": True, "project_id": project_id}
+        
     except Exception as e:
+        logger.error(f"Failed to add project: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to add project: {str(e)}")
 
 @app.delete("/projects/{project_id}")
 async def remove_project(project_id: str):
     """Remove a Firebase project"""
     try:
+        logger.info(f"Removing project: {project_id}")
+        
         if project_id in firebase_apps:
             firebase_admin.delete_app(firebase_apps[project_id])
             del firebase_apps[project_id]
@@ -95,14 +116,19 @@ async def remove_project(project_id: str):
         if project_id in pyrebase_apps:
             del pyrebase_apps[project_id]
         
+        logger.info(f"Project {project_id} removed successfully")
         return {"success": True}
+        
     except Exception as e:
+        logger.error(f"Failed to remove project: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to remove project: {str(e)}")
 
 @app.get("/projects/{project_id}/users")
 async def load_users(project_id: str):
     """Load all users from Firebase project"""
     try:
+        logger.info(f"Loading users for project: {project_id}")
+        
         if project_id not in firebase_apps:
             raise HTTPException(status_code=404, detail="Project not found")
         
@@ -125,14 +151,19 @@ async def load_users(project_id: str):
             # Get next page
             page = page.get_next_page() if page.has_next_page else None
         
+        logger.info(f"Loaded {len(users)} users from project {project_id}")
         return {"users": users}
+        
     except Exception as e:
+        logger.error(f"Failed to load users: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to load users: {str(e)}")
 
 @app.post("/projects/{project_id}/users/import")
 async def import_users(project_id: str, user_import: UserImport):
     """Import users to Firebase project"""
     try:
+        logger.info(f"Importing {len(user_import.emails)} users to project {project_id}")
+        
         if project_id not in firebase_apps:
             raise HTTPException(status_code=404, detail="Project not found")
         
@@ -156,20 +187,25 @@ async def import_users(project_id: str, user_import: UserImport):
             results = auth.import_users(batch, app=app)
             total_imported += results.success_count
             
-            print(f"Batch {i//batch_size + 1}: {results.success_count} success, {results.failure_count} failures")
+            logger.info(f"Batch {i//batch_size + 1}: {results.success_count} success, {results.failure_count} failures")
             
             # Add delay between batches
             if i + batch_size < len(emails):
                 await asyncio.sleep(5)  # 5 second delay
         
+        logger.info(f"Import completed: {total_imported} users imported")
         return {"imported": total_imported}
+        
     except Exception as e:
+        logger.error(f"Failed to import users: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to import users: {str(e)}")
 
 @app.delete("/projects/{project_id}/users")
 async def delete_all_users(project_id: str):
     """Delete all users from Firebase project"""
     try:
+        logger.info(f"Deleting all users from project {project_id}")
+        
         if project_id not in firebase_apps:
             raise HTTPException(status_code=404, detail="Project not found")
         
@@ -188,22 +224,27 @@ async def delete_all_users(project_id: str):
             results = auth.delete_users(uids, app=app)
             total_deleted += results.success_count
             
-            print(f"Deleted {results.success_count} users, {results.failure_count} failures")
+            logger.info(f"Deleted {results.success_count} users, {results.failure_count} failures")
             
             # Add delay between batches
             await asyncio.sleep(5)
         
+        logger.info(f"Deletion completed: {total_deleted} users deleted")
         return {"deleted": total_deleted}
+        
     except Exception as e:
+        logger.error(f"Failed to delete users: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to delete users: {str(e)}")
 
-# Campaign management (simplified - you'd want to use a proper queue system)
+# Campaign management
 active_campaigns = {}
 
 @app.post("/campaigns/{campaign_id}/start")
 async def start_campaign(campaign_id: str, campaign: CampaignStart, background_tasks: BackgroundTasks):
     """Start a password reset campaign"""
     try:
+        logger.info(f"Starting campaign {campaign_id}")
+        
         # Add campaign to background tasks
         background_tasks.add_task(run_campaign, campaign_id, campaign)
         
@@ -220,12 +261,16 @@ async def start_campaign(campaign_id: str, campaign: CampaignStart, background_t
         }
         
         return {"success": True}
+        
     except Exception as e:
+        logger.error(f"Failed to start campaign: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to start campaign: {str(e)}")
 
 async def run_campaign(campaign_id: str, campaign: CampaignStart):
     """Run password reset campaign in background"""
     try:
+        logger.info(f"Running campaign {campaign_id}")
+        
         total_users = sum(len(users) for users in campaign.selectedUsers.values())
         total_batches = (total_users + campaign.batchSize - 1) // campaign.batchSize
         
@@ -266,11 +311,12 @@ async def run_campaign(campaign_id: str, campaign: CampaignStart):
                         try:
                             pyrebase_auth.send_password_reset_email(email)
                             successful += 1
-                            print(f"Password reset sent to {email}")
+                            logger.info(f"Password reset sent to {email}")
                         except Exception as e:
                             failed += 1
-                            active_campaigns[campaign_id]["errors"].append(f"Failed to send to {email}: {str(e)}")
-                            print(f"Failed to send to {email}: {str(e)}")
+                            error_msg = f"Failed to send to {email}: {str(e)}"
+                            active_campaigns[campaign_id]["errors"].append(error_msg)
+                            logger.error(error_msg)
                     
                     processed += 1
                     
@@ -281,7 +327,7 @@ async def run_campaign(campaign_id: str, campaign: CampaignStart):
                         "failed": failed,
                     })
                     
-                    # Wait between emails (100ms like Python script)
+                    # Wait between emails (100ms)
                     await asyncio.sleep(0.1)
                 
                 current_batch += 1
@@ -295,7 +341,10 @@ async def run_campaign(campaign_id: str, campaign: CampaignStart):
             "completedAt": datetime.now().isoformat(),
         })
         
+        logger.info(f"Campaign {campaign_id} completed successfully")
+        
     except Exception as e:
+        logger.error(f"Campaign {campaign_id} failed: {str(e)}")
         active_campaigns[campaign_id].update({
             "status": "failed",
             "errors": active_campaigns[campaign_id]["errors"] + [f"Campaign failed: {str(e)}"],
@@ -327,16 +376,24 @@ async def resume_campaign(campaign_id: str):
 async def test_email_send(project_id: str, test_email: TestEmail):
     """Test sending a password reset email"""
     try:
+        logger.info(f"Testing email send for project {project_id} to {test_email.email}")
+        
         if project_id not in pyrebase_apps:
             raise HTTPException(status_code=404, detail="Project not found")
         
         pyrebase_auth = pyrebase_apps[project_id].auth()
         pyrebase_auth.send_password_reset_email(test_email.email)
         
+        logger.info(f"Test email sent successfully to {test_email.email}")
         return {"success": True}
+        
     except Exception as e:
+        logger.error(f"Test email failed: {str(e)}")
         return {"success": False, "error": str(e)}
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    print("Starting Firebase Email Campaign Backend...")
+    print("Backend will be available at: http://localhost:8000")
+    print("API documentation: http://localhost:8000/docs")
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
