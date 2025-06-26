@@ -1,4 +1,3 @@
-
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 
 interface FirebaseProject {
@@ -56,7 +55,7 @@ interface AppContextType {
   addProject: (project: Omit<FirebaseProject, 'id' | 'createdAt' | 'status'>) => Promise<void>;
   removeProject: (id: string) => void;
   loadUsers: (projectId: string) => Promise<void>;
-  importUsers: (projectId: string, emails: string[]) => Promise<void>;
+  importUsers: (projectId: string, emails: string[]) => Promise<number>;
   deleteAllUsers: (projectId: string) => Promise<void>;
   createCampaign: (campaign: Omit<Campaign, 'id' | 'createdAt' | 'status' | 'processed' | 'successful' | 'failed' | 'currentBatch' | 'totalBatches' | 'currentProject' | 'errors'>) => void;
   startCampaign: (campaignId: string) => Promise<void>;
@@ -191,7 +190,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   };
 
-  const importUsers = async (projectId: string, emails: string[]) => {
+  const importUsers = async (projectId: string, emails: string[]): Promise<number> => {
     try {
       const batchSize = 100; // Simulate batch processing like your Python script
       const batches = Math.ceil(emails.length / batchSize);
