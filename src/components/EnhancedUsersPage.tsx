@@ -47,14 +47,16 @@ export const EnhancedUsersPage = () => {
     setLoading(true);
     try {
       await loadUsers(selectedProject);
+      const loadedUsers = users[selectedProject] || [];
       toast({
         title: "Users loaded",
-        description: `Successfully loaded ${users[selectedProject]?.length || 0} users.`,
+        description: `Successfully loaded ${loadedUsers.length} users.`,
       });
     } catch (error) {
+      console.error('Failed to load users:', error);
       toast({
         title: "Failed to load users",
-        description: "Please check your project configuration.",
+        description: "Please check your project configuration and try again.",
         variant: "destructive",
       });
     } finally {

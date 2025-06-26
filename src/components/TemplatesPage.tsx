@@ -77,14 +77,22 @@ export const TemplatesPage = () => {
       - Clear call-to-action
       - Include {{reset_link}} placeholder for the reset link
       - HTML format with inline CSS for email compatibility
-      - Avoid spam trigger words
+      - Avoid spam trigger words like "free", "urgent", "act now", "click here", "guaranteed"
       - Include security best practices messaging
       - Company branding friendly
       - Mobile responsive design
+      - Use professional language without excessive exclamation marks
+      - Focus on user security and trust
+      - Include clear instructions for the user
       
       ${customPrompt ? `Additional requirements: ${customPrompt}` : ''}
       
-      Generate both the email template and a professional subject line.`;
+      Generate both the email template and a professional subject line. Format the response as:
+      
+      SUBJECT: [subject line here]
+      
+      TEMPLATE:
+      [HTML template here]`;
 
       let response;
       let htmlTemplate = '';
@@ -115,12 +123,12 @@ export const TemplatesPage = () => {
         if (data.candidates && data.candidates[0]) {
           const content = data.candidates[0].content.parts[0].text;
           // Extract subject and template from the response
-          const subjectMatch = content.match(/Subject:\s*(.+)/i);
+          const subjectMatch = content.match(/SUBJECT:\s*(.+)/i);
           if (subjectMatch) {
             subject = subjectMatch[1].trim();
           }
-          // Extract HTML template (everything after the subject line)
-          const templateMatch = content.match(/(?:template|html):\s*([\s\S]+)/i);
+          // Extract HTML template
+          const templateMatch = content.match(/TEMPLATE:\s*([\s\S]+)/i);
           if (templateMatch) {
             htmlTemplate = templateMatch[1].trim();
           } else {
@@ -139,7 +147,7 @@ export const TemplatesPage = () => {
             messages: [
               {
                 role: 'system',
-                content: 'You are a professional email template designer. Generate clean, professional HTML email templates with inline CSS.'
+                content: 'You are a professional email template designer. Generate clean, professional HTML email templates with inline CSS that avoid spam triggers and focus on user security.'
               },
               {
                 role: 'user',
@@ -155,12 +163,12 @@ export const TemplatesPage = () => {
         if (data.choices && data.choices[0]) {
           const content = data.choices[0].message.content;
           // Extract subject and template from the response
-          const subjectMatch = content.match(/Subject:\s*(.+)/i);
+          const subjectMatch = content.match(/SUBJECT:\s*(.+)/i);
           if (subjectMatch) {
             subject = subjectMatch[1].trim();
           }
           // Extract HTML template
-          const templateMatch = content.match(/(?:template|html):\s*([\s\S]+)/i);
+          const templateMatch = content.match(/TEMPLATE:\s*([\s\S]+)/i);
           if (templateMatch) {
             htmlTemplate = templateMatch[1].trim();
           } else {
@@ -173,8 +181,8 @@ export const TemplatesPage = () => {
         setCurrentTemplate(htmlTemplate);
         setGeneratedSubject(subject || 'Password Reset Request');
         toast({
-          title: "Template Generated!",
-          description: `Professional email template generated using ${selectedAI === 'gemini' ? 'Gemini' : 'GPT'}.`,
+          title: "Template Generated Successfully! ✨",
+          description: `Professional email template generated using ${selectedAI === 'gemini' ? 'Gemini' : 'GPT'} AI.`,
         });
       } else {
         throw new Error('No template generated');
@@ -198,10 +206,10 @@ export const TemplatesPage = () => {
   return (
     <div className="p-8 space-y-8">
       <div>
-        <h1 className="text-3xl font-bold text-white mb-2">AI Email Templates</h1>
+        <h1 className="text-3xl font-bold text-white mb-2">AI-Powered Email Templates</h1>
         <p className="text-gray-400">
           Profile: <span className="text-blue-400 font-medium">{activeProfileName}</span> • 
-          Create and edit HTML templates for password reset emails with AI assistance
+          Create professional HTML templates for password reset emails with AI assistance
         </p>
       </div>
 
@@ -217,7 +225,10 @@ export const TemplatesPage = () => {
             <SelectContent className="bg-gray-700 border-gray-600">
               {activeProjects.map((project) => (
                 <SelectItem key={project.id} value={project.id} className="text-white hover:bg-gray-600">
-                  {project.name}
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-green-500" />
+                    {project.name}
+                  </div>
                 </SelectItem>
               ))}
             </SelectContent>
@@ -233,13 +244,16 @@ export const TemplatesPage = () => {
               <CardTitle className="text-white flex items-center gap-2">
                 <Sparkles className="w-5 h-5 text-purple-400" />
                 AI Template Generator
-                <Badge className="bg-purple-500/20 text-purple-400">Beta</Badge>
+                <Badge className="bg-purple-500/20 text-purple-400">Professional</Badge>
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <Label className="text-gray-300">AI Provider</Label>
+                  <Label className="text-gray-300 flex items-center gap-2">
+                    <Bot className="w-4 h-4" />
+                    AI Provider
+                  </Label>
                   <Select value={selectedAI} onValueChange={(value: 'gemini' | 'gpt') => setSelectedAI(value)}>
                     <SelectTrigger className="bg-gray-700 border-gray-600 text-white">
                       <SelectValue />
@@ -248,13 +262,13 @@ export const TemplatesPage = () => {
                       <SelectItem value="gemini" className="text-white hover:bg-gray-600">
                         <div className="flex items-center gap-2">
                           <Bot className="w-4 h-4 text-blue-400" />
-                          Google Gemini
+                          Google Gemini Pro
                         </div>
                       </SelectItem>
                       <SelectItem value="gpt" className="text-white hover:bg-gray-600">
                         <div className="flex items-center gap-2">
                           <Zap className="w-4 h-4 text-green-400" />
-                          OpenAI GPT
+                          OpenAI GPT-4
                         </div>
                       </SelectItem>
                     </SelectContent>
@@ -262,7 +276,7 @@ export const TemplatesPage = () => {
                 </div>
                 <div>
                   <Label className="text-gray-300">
-                    {selectedAI === 'gemini' ? 'Gemini' : 'GPT'} API Key
+                    {selectedAI === 'gemini' ? 'Gemini Pro' : 'GPT-4'} API Key
                   </Label>
                   <Input
                     type="password"
@@ -271,7 +285,7 @@ export const TemplatesPage = () => {
                       ? setGeminiApiKey(e.target.value) 
                       : setGptApiKey(e.target.value)
                     }
-                    placeholder={`Enter your ${selectedAI === 'gemini' ? 'Gemini' : 'OpenAI'} API key`}
+                    placeholder={`Enter your ${selectedAI === 'gemini' ? 'Gemini Pro' : 'OpenAI'} API key`}
                     className="bg-gray-700 border-gray-600 text-white"
                   />
                 </div>
@@ -282,36 +296,43 @@ export const TemplatesPage = () => {
                 <Textarea
                   value={customPrompt}
                   onChange={(e) => setCustomPrompt(e.target.value)}
-                  placeholder="Add specific requirements for your email template (e.g., brand colors, specific messaging, etc.)"
+                  placeholder="Add specific requirements: brand colors, tone, additional security features, etc."
                   className="bg-gray-700 border-gray-600 text-white"
                   rows={3}
                 />
               </div>
 
               {generatedSubject && (
-                <div className="bg-green-900/20 border border-green-500/30 p-3 rounded-lg">
-                  <Label className="text-green-400 text-sm">Generated Subject Line:</Label>
-                  <p className="text-white font-medium">{generatedSubject}</p>
+                <div className="bg-green-900/20 border border-green-500/30 p-4 rounded-lg">
+                  <Label className="text-green-400 text-sm font-medium">✨ Generated Subject Line:</Label>
+                  <p className="text-white font-medium mt-1">{generatedSubject}</p>
                 </div>
               )}
 
-              <Button
-                onClick={generateWithAI}
-                disabled={isGenerating}
-                className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
-              >
-                {isGenerating ? (
-                  <>
-                    <div className="animate-spin w-4 h-4 mr-2 border-2 border-white border-t-transparent rounded-full" />
-                    Generating...
-                  </>
-                ) : (
-                  <>
-                    <Wand2 className="w-4 h-4 mr-2" />
-                    Generate Template
-                  </>
-                )}
-              </Button>
+              <div className="flex items-center gap-4">
+                <Button
+                  onClick={generateWithAI}
+                  disabled={isGenerating}
+                  className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 flex-1 max-w-sm"
+                >
+                  {isGenerating ? (
+                    <>
+                      <div className="animate-spin w-4 h-4 mr-2 border-2 border-white border-t-transparent rounded-full" />
+                      Generating Template...
+                    </>
+                  ) : (
+                    <>
+                      <Wand2 className="w-4 h-4 mr-2" />
+                      Generate Professional Template
+                    </>
+                  )}
+                </Button>
+                <div className="text-gray-400 text-sm">
+                  <p>✓ Spam-free language</p>
+                  <p>✓ Professional tone</p>
+                  <p>✓ Security focused</p>
+                </div>
+              </div>
             </CardContent>
           </Card>
 
@@ -320,7 +341,7 @@ export const TemplatesPage = () => {
               <CardHeader className="flex flex-row items-center justify-between space-y-0">
                 <CardTitle className="text-white flex items-center gap-2">
                   <FileText className="w-5 h-5" />
-                  HTML Editor
+                  HTML Template Editor
                 </CardTitle>
                 <div className="flex gap-2">
                   <Button
@@ -338,7 +359,7 @@ export const TemplatesPage = () => {
                     className="bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800"
                   >
                     <Save className="w-4 h-4 mr-2" />
-                    Save
+                    Save Template
                   </Button>
                 </div>
               </CardHeader>
@@ -348,7 +369,7 @@ export const TemplatesPage = () => {
                     <h4 className="text-blue-400 font-medium mb-2">Template Variables</h4>
                     <p className="text-gray-300 text-sm">
                       Use <code className="bg-gray-700 px-2 py-1 rounded text-blue-300">{'{{reset_link}}'}</code> in your template. 
-                      It will be replaced with the actual Firebase password reset link.
+                      It will be replaced with the actual Firebase password reset link when sent.
                     </p>
                   </div>
                   <Textarea
@@ -364,10 +385,13 @@ export const TemplatesPage = () => {
             {showPreview && (
               <Card className="bg-gray-800 border-gray-700">
                 <CardHeader>
-                  <CardTitle className="text-white">Live Preview</CardTitle>
+                  <CardTitle className="text-white flex items-center gap-2">
+                    <Eye className="w-5 h-5" />
+                    Live Preview
+                  </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="bg-white rounded-lg p-4 min-h-[400px]">
+                  <div className="bg-white rounded-lg p-4 min-h-[400px] shadow-inner">
                     <div dangerouslySetInnerHTML={{ __html: previewTemplate }} />
                   </div>
                 </CardContent>
@@ -383,7 +407,7 @@ export const TemplatesPage = () => {
             <FileText className="w-12 h-12 text-gray-500 mx-auto mb-4" />
             <h3 className="text-xl font-semibold text-white mb-2">Select a Project</h3>
             <p className="text-gray-400">
-              Choose a Firebase project from the current profile to edit its email template.
+              Choose a Firebase project from the current profile to create professional email templates with AI assistance.
             </p>
           </CardContent>
         </Card>

@@ -122,11 +122,11 @@ export const ProfileManager = ({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="p-8 space-y-8">
       <div className="flex justify-between items-center">
         <div>
-          <h2 className="text-2xl font-bold text-white">Profile Management</h2>
-          <p className="text-gray-400">Organize your Firebase projects into profiles</p>
+          <h1 className="text-3xl font-bold text-white mb-2">Profile Management</h1>
+          <p className="text-gray-400">Organize your Firebase projects into profiles for better management</p>
         </div>
         <div className="flex gap-2">
           <input
@@ -162,26 +162,23 @@ export const ProfileManager = ({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {profiles.map((profile) => (
-          <Card 
-            key={profile.id} 
-            className={`cursor-pointer transition-all ${
-              activeProfile === profile.id 
-                ? 'bg-gradient-to-r from-purple-900/50 to-blue-900/50 border-purple-500/50' 
-                : 'bg-gray-800 border-gray-700 hover:bg-gray-750'
-            }`}
-            onClick={() => onProfileChange(profile.id)}
-          >
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-lg font-semibold text-white flex items-center gap-2">
-                <FolderOpen className="w-5 h-5 text-blue-500" />
-                {profile.name}
-              </CardTitle>
-              <div className="flex items-center gap-2">
-                <Badge className="bg-blue-500/20 text-blue-400">
-                  {projectCounts[profile.id] || 0} projects
-                </Badge>
+      {profiles.length > 0 ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {profiles.map((profile) => (
+            <Card 
+              key={profile.id} 
+              className={`cursor-pointer transition-all duration-200 hover:scale-105 hover:shadow-xl ${
+                activeProfile === profile.id 
+                  ? 'bg-gradient-to-r from-purple-900/50 to-blue-900/50 border-purple-500/50 shadow-lg' 
+                  : 'bg-gray-800 border-gray-700 hover:bg-gray-750'
+              }`}
+              onClick={() => onProfileChange(profile.id)}
+            >
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-lg font-semibold text-white flex items-center gap-2">
+                  <FolderOpen className="w-5 h-5 text-blue-500" />
+                  {profile.name}
+                </CardTitle>
                 <Button
                   variant="ghost"
                   size="sm"
@@ -193,17 +190,47 @@ export const ProfileManager = ({
                 >
                   <Trash2 className="w-4 h-4" />
                 </Button>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <p className="text-gray-400 text-sm">{profile.description || 'No description'}</p>
-              <p className="text-gray-500 text-xs mt-2">
-                Created: {new Date(profile.createdAt).toLocaleDateString()}
-              </p>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-gray-400 text-sm">{profile.description || 'No description'}</p>
+                
+                <div className="flex items-center justify-between">
+                  <Badge className="bg-blue-500/20 text-blue-400 flex items-center gap-1">
+                    <FolderOpen className="w-3 h-3" />
+                    {projectCounts[profile.id] || 0} projects
+                  </Badge>
+                  {activeProfile === profile.id && (
+                    <Badge className="bg-green-500/20 text-green-400">
+                      Active
+                    </Badge>
+                  )}
+                </div>
+                
+                <p className="text-gray-500 text-xs">
+                  Created: {new Date(profile.createdAt).toLocaleDateString()}
+                </p>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      ) : (
+        <Card className="bg-gray-800 border-gray-700">
+          <CardContent className="py-12 text-center">
+            <FolderOpen className="w-12 h-12 text-gray-500 mx-auto mb-4" />
+            <h3 className="text-xl font-semibold text-white mb-2">No Profiles Found</h3>
+            <p className="text-gray-400 mb-6">
+              Create your first profile to organize your Firebase projects.
+            </p>
+            <Button
+              onClick={() => setShowCreateDialog(true)}
+              className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Create First Profile
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
         <DialogContent className="bg-gray-800 border-gray-700">
