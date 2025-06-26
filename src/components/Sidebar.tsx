@@ -1,12 +1,31 @@
+
 import { LayoutDashboard, Server, Users, FileText, Send, FolderOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Dispatch, SetStateAction } from 'react';
+
+interface Profile {
+  id: string;
+  name: string;
+  description?: string;
+}
 
 interface SidebarProps {
   currentPage: string;
-  onPageChange: (page: string) => void;
+  setCurrentPage: Dispatch<SetStateAction<string>>;
+  profiles: Profile[];
+  activeProfile: string;
+  onProfileChange: (profileId: string) => void;
+  onAddProfile: (profile: Omit<Profile, 'id'>) => void;
 }
 
-export const Sidebar = ({ currentPage, onPageChange }: SidebarProps) => {
+export const Sidebar = ({ 
+  currentPage, 
+  setCurrentPage,
+  profiles,
+  activeProfile,
+  onProfileChange,
+  onAddProfile
+}: SidebarProps) => {
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'profiles', label: 'Profiles', icon: FolderOpen },
@@ -29,7 +48,7 @@ export const Sidebar = ({ currentPage, onPageChange }: SidebarProps) => {
             className={`w-full justify-start px-4 py-2 text-gray-300 hover:bg-gray-700 ${
               currentPage === item.id ? 'bg-gray-700 text-white' : ''
             }`}
-            onClick={() => onPageChange(item.id)}
+            onClick={() => setCurrentPage(item.id)}
           >
             <item.icon className="w-4 h-4 mr-2" />
             {item.label}
