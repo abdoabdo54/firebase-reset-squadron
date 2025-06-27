@@ -29,6 +29,7 @@ export const EnhancedUsersPage = () => {
   const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set());
   const [showImportModal, setShowImportModal] = useState(false);
   const [loadingUsers, setLoadingUsers] = useState(false);
+  const [userLoadError, setUserLoadError] = useState<string>('');
 
   // Filter projects by active profile
   const activeProjects = projects.filter(p => 
@@ -39,23 +40,41 @@ export const EnhancedUsersPage = () => {
 
   const handleRefreshUsers = async (projectId?: string) => {
     setLoadingUsers(true);
+    setUserLoadError('');
+    
     try {
+      console.log('Loading users for projects:', projectId ? [projectId] : activeProjects.map(p => p.id));
+      
       if (projectId) {
+        console.log('Loading users for specific project:', projectId);
         await loadUsers(projectId);
+        console.log('Users loaded for project:', projectId, users[projectId]?.length || 0);
       } else {
         // Load users for all active projects
+        console.log('Loading users for all active projects:', activeProjects.length);
         for (const project of activeProjects) {
-          await loadUsers(project.id);
+          console.log('Loading users for project:', project.id, project.name);
+          try {
+            await loadUsers(project.id);
+            console.log('Users loaded for project:', project.id, users[project.id]?.length || 0);
+          } catch (error) {
+            console.error('Failed to load users for project:', project.id, error);
+            setUserLoadError(`Failed to load users for project ${project.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          }
         }
       }
+      
       toast({
         title: "Users Refreshed",
         description: "User list has been updated successfully.",
       });
     } catch (error) {
+      console.error('Failed to refresh users:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      setUserLoadError(`Failed to refresh users: ${errorMessage}`);
       toast({
         title: "Error",
-        description: "Failed to refresh users.",
+        description: `Failed to refresh users: ${errorMessage}`,
         variant: "destructive",
       });
     } finally {
@@ -220,10 +239,15 @@ export const EnhancedUsersPage = () => {
 
   // Auto-load users when component mounts or active projects change
   useEffect(() => {
+    console.log('EnhancedUsersPage useEffect triggered');
+    console.log('Active projects:', activeProjects.length);
+    console.log('Active profile:', activeProfile);
+    
     if (activeProjects.length > 0) {
+      console.log('Auto-loading users for active projects');
       handleRefreshUsers();
     }
-  }, [activeProjects.length]);
+  }, [activeProfile]); // Only depend on activeProfile to avoid infinite loops
 
   return (
     <div className="p-8 space-y-8">
@@ -234,6 +258,11 @@ export const EnhancedUsersPage = () => {
             Profile: <span className="text-blue-400 font-medium">{activeProfileName}</span> • 
             Manage Firebase Authentication users across your projects
           </p>
+          {userLoadError && (
+            <div className="mt-2 p-3 bg-red-900/20 border border-red-500/30 rounded-lg">
+              <p className="text-red-400 text-sm">{userLoadError}</p>
+            </div>
+          )}
         </div>
         <div className="flex gap-2">
           <Button
@@ -283,7 +312,10 @@ export const EnhancedUsersPage = () => {
             {activeProjects.map((project) => (
               <SelectItem key={project.id} value={project.id} className="text-white hover:bg-gray-700">
                 <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-green-500" />
+                  <div className={`w-2 h-2 rounded-full ${
+                    project.status === 'active' ? 'bg-green-500' :
+                    project.status === 'error' ? 'bg-red-500' : 'bg-yellow-500'
+                  }`} />
                   {project.name}
                 </div>
               </SelectItem>
@@ -322,6 +354,9 @@ export const EnhancedUsersPage = () => {
             <p className="text-gray-400">
               Add some Firebase projects to the current profile to manage users.
             </p>
+            <div className="mt-4 text-sm text-gray-500">
+              Current profile: {activeProfileName} | Total projects: {projects.length} | Active projects: {activeProjects.length}
+            </div>
           </CardContent>
         </Card>
       ) : (
@@ -355,6 +390,20 @@ export const EnhancedUsersPage = () => {
                 <span className="text-gray-400">Loading users...</span>
               </div>
             )}
+
+            {/* Debug information */}
+            <div className="mb-4 p-3 bg-gray-700 rounded-lg text-xs text-gray-400">
+              <div>Debug Info:</div>
+              <div>Active Profile: {activeProfile || 'None'}</div>
+              <div>Active Projects: {activeProjects.length}</div>
+              <div>Projects with users: {Object.keys(users).length}</div>
+              <div>Total users across all projects: {Object.values(users).reduce((sum, userList) => sum + userList.length, 0)}</div>
+              {activeProjects.map(project => (
+                <div key={project.id}>
+                  Project {project.name} ({project.id}): {users[project.id]?.length || 0} users
+                </div>
+              ))}
+            </div>
             
             {filteredUsers.length > 0 ? (
               <div className="space-y-4">
@@ -418,6 +467,14 @@ export const EnhancedUsersPage = () => {
                 <p className="text-gray-400">
                   {searchTerm ? 'No users match your search criteria.' : 'No users found in the selected projects.'}
                 </p>
+                {userLoadError && (
+                  <div className="mt-4 p-3 bg-red-900/20 border border-red-500/30 rounded-lg">
+                    <p className="text-red-400 text-sm">Backend Error: {userLoadError}</p>
+                    <p className="text-gray-400 text-xs mt-1">
+                      Check your backend server and Firebase project configuration.
+                    </p>
+                  </div>
+                )}
               </div>
             )}
           </CardContent>
