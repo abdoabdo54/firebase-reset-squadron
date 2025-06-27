@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { useToast } from '@/hooks/use-toast';
 import { Profile, localStorageService } from '@/services/LocalStorageService';
 import { useEnhancedApp } from '@/contexts/EnhancedAppContext';
+import { CampaignManager } from './CampaignManager';
 
 export const ProfileManager = () => {
   const { toast } = useToast();
@@ -19,10 +20,12 @@ export const ProfileManager = () => {
     activeProfile, 
     setActiveProfile, 
     addProfile, 
-    removeProfile 
+    removeProfile,
+    updateProfile
   } = useEnhancedApp();
   
   const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [editingProfile, setEditingProfile] = useState<Profile | null>(null);
   const [formData, setFormData] = useState({ name: '', description: '' });
 
   // Count projects per profile
@@ -52,6 +55,35 @@ export const ProfileManager = () => {
     toast({
       title: "Profile Created",
       description: `Profile "${formData.name}" has been created successfully.`,
+    });
+  };
+
+  const handleEditProfile = (profile: Profile) => {
+    setEditingProfile(profile);
+    setFormData({ name: profile.name, description: profile.description || '' });
+  };
+
+  const handleUpdateProfile = () => {
+    if (!editingProfile || !formData.name.trim()) {
+      toast({
+        title: "Error",
+        description: "Profile name is required.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    updateProfile(editingProfile.id, {
+      name: formData.name,
+      description: formData.description,
+    });
+
+    setEditingProfile(null);
+    setFormData({ name: '', description: '' });
+    
+    toast({
+      title: "Profile Updated",
+      description: `Profile "${formData.name}" has been updated successfully.`,
     });
   };
 
@@ -154,17 +186,30 @@ export const ProfileManager = () => {
                   <FolderOpen className="w-5 h-5 text-blue-500" />
                   {profile.name}
                 </CardTitle>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDeleteProfile(profile.id);
-                  }}
-                  className="text-red-400 hover:text-red-300 hover:bg-red-900/20"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </Button>
+                <div className="flex gap-1">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleEditProfile(profile);
+                    }}
+                    className="text-blue-400 hover:text-blue-300 hover:bg-blue-900/20"
+                  >
+                    <Edit className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteProfile(profile.id);
+                    }}
+                    className="text-red-400 hover:text-red-300 hover:bg-red-900/20"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent className="space-y-3">
                 <p className="text-gray-400 text-sm">{profile.description || 'No description'}</p>
@@ -207,6 +252,10 @@ export const ProfileManager = () => {
         </Card>
       )}
 
+      {/* Campaign Management Section */}
+      <CampaignManager />
+
+      {/* Create Profile Dialog */}
       <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
         <DialogContent className="bg-gray-800 border-gray-700">
           <DialogHeader>
@@ -243,6 +292,52 @@ export const ProfileManager = () => {
               <Button
                 variant="outline"
                 onClick={() => setShowCreateDialog(false)}
+                className="border-gray-600 text-gray-300 hover:bg-gray-700"
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Profile Dialog */}
+      <Dialog open={!!editingProfile} onOpenChange={() => setEditingProfile(null)}>
+        <DialogContent className="bg-gray-800 border-gray-700">
+          <DialogHeader>
+            <DialogTitle className="text-white">Edit Profile</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="editProfileName" className="text-gray-300">Profile Name</Label>
+              <Input
+                id="editProfileName"
+                value={formData.name}
+                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                placeholder="Production Environment"
+                className="bg-gray-700 border-gray-600 text-white"
+              />
+            </div>
+            <div>
+              <Label htmlFor="editProfileDescription" className="text-gray-300">Description (Optional)</Label>
+              <Input
+                id="editProfileDescription"
+                value={formData.description}
+                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                placeholder="Main production Firebase projects"
+                className="bg-gray-700 border-gray-600 text-white"
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button
+                onClick={handleUpdateProfile}
+                className="bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800"
+              >
+                Update Profile
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setEditingProfile(null)}
                 className="border-gray-600 text-gray-300 hover:bg-gray-700"
               >
                 Cancel

@@ -1,7 +1,7 @@
 
 import { useState, useEffect } from 'react';
 import { useEnhancedApp } from '@/contexts/EnhancedAppContext';
-import { Users, Upload, Trash2, Search, RefreshCw, UserX } from 'lucide-react';
+import { Users, Upload, Trash2, Search, RefreshCw, UserX, Download } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,7 +28,7 @@ export const EnhancedUsersPage = () => {
   const [selectedProject, setSelectedProject] = useState<string>('');
   const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set());
   const [showImportModal, setShowImportModal] = useState(false);
-  const [loadingUsers, setLoadingUsers] = useState<{[key: string]: boolean}>({});
+  const [loadingUsers, setLoadingUsers] = useState(false);
 
   // Filter projects by active profile
   const activeProjects = projects.filter(p => 
@@ -37,40 +37,17 @@ export const EnhancedUsersPage = () => {
 
   const activeProfileName = profiles.find(p => p.id === activeProfile)?.name || 'All Projects';
 
-  // Load users for all active projects on mount and when activeProjects changes
-  useEffect(() => {
-    const loadAllUsers = async () => {
-      console.log('Loading users for active projects:', activeProjects);
-      for (const project of activeProjects) {
-        if (!users[project.id] && !loadingUsers[project.id]) {
-          console.log(`Loading users for project: ${project.name} (${project.id})`);
-          setLoadingUsers(prev => ({ ...prev, [project.id]: true }));
-          try {
-            await loadUsers(project.id);
-            console.log(`Successfully loaded users for project: ${project.name}`);
-          } catch (error) {
-            console.error(`Failed to load users for project ${project.name}:`, error);
-            toast({
-              title: "Failed to load users",
-              description: `Could not load users for project ${project.name}. Please check your backend connection.`,
-              variant: "destructive",
-            });
-          } finally {
-            setLoadingUsers(prev => ({ ...prev, [project.id]: false }));
-          }
+  const handleRefreshUsers = async (projectId?: string) => {
+    setLoadingUsers(true);
+    try {
+      if (projectId) {
+        await loadUsers(projectId);
+      } else {
+        // Load users for all active projects
+        for (const project of activeProjects) {
+          await loadUsers(project.id);
         }
       }
-    };
-
-    if (activeProjects.length > 0) {
-      loadAllUsers();
-    }
-  }, [activeProjects, loadUsers, users, loadingUsers, toast]);
-
-  const handleRefreshUsers = async (projectId: string) => {
-    setLoadingUsers(prev => ({ ...prev, [projectId]: true }));
-    try {
-      await loadUsers(projectId);
       toast({
         title: "Users Refreshed",
         description: "User list has been updated successfully.",
@@ -82,7 +59,7 @@ export const EnhancedUsersPage = () => {
         variant: "destructive",
       });
     } finally {
-      setLoadingUsers(prev => ({ ...prev, [projectId]: false }));
+      setLoadingUsers(false);
     }
   };
 
@@ -93,8 +70,17 @@ export const EnhancedUsersPage = () => {
 
     try {
       await deleteUser(projectId, userId);
+      toast({
+        title: "User Deleted",
+        description: "User has been deleted successfully.",
+      });
     } catch (error) {
       console.error('Failed to delete user:', error);
+      toast({
+        title: "Error",
+        description: "Failed to delete user.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -116,8 +102,52 @@ export const EnhancedUsersPage = () => {
       const projectIds = selectedProject ? [selectedProject] : activeProjects.map(p => p.id);
       await bulkDeleteUsers(projectIds, Array.from(selectedUsers));
       setSelectedUsers(new Set());
+      toast({
+        title: "Users Deleted",
+        description: `Successfully deleted ${selectedUsers.size} users.`,
+      });
     } catch (error) {
       console.error('Failed to bulk delete users:', error);
+      toast({
+        title: "Error",
+        description: "Failed to delete users.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleDeleteAllUsers = async () => {
+    const projectIds = selectedProject ? [selectedProject] : activeProjects.map(p => p.id);
+    const totalUsers = projectIds.reduce((sum, pid) => sum + (users[pid]?.length || 0), 0);
+    
+    if (totalUsers === 0) {
+      toast({
+        title: "No Users Found",
+        description: "No users to delete.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to delete ALL ${totalUsers} users from ${selectedProject ? '1 project' : `${projectIds.length} projects`}?`)) {
+      return;
+    }
+
+    try {
+      const allUserIds = projectIds.flatMap(pid => (users[pid] || []).map(u => u.uid));
+      await bulkDeleteUsers(projectIds, allUserIds);
+      setSelectedUsers(new Set());
+      toast({
+        title: "All Users Deleted",
+        description: `Successfully deleted ${totalUsers} users.`,
+      });
+    } catch (error) {
+      console.error('Failed to delete all users:', error);
+      toast({
+        title: "Error",
+        description: "Failed to delete all users.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -129,6 +159,15 @@ export const EnhancedUsersPage = () => {
       newSelected.add(userId);
     }
     setSelectedUsers(newSelected);
+  };
+
+  const handleSelectAll = () => {
+    const filteredUsers = getFilteredUsers();
+    if (selectedUsers.size === filteredUsers.length) {
+      setSelectedUsers(new Set());
+    } else {
+      setSelectedUsers(new Set(filteredUsers.map(user => user.uid)));
+    }
   };
 
   const getFilteredUsers = () => {
@@ -150,7 +189,41 @@ export const EnhancedUsersPage = () => {
     return allUsers;
   };
 
+  const exportUsers = () => {
+    const filteredUsers = getFilteredUsers();
+    if (filteredUsers.length === 0) {
+      toast({
+        title: "No Users to Export",
+        description: "No users found to export.",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    const csvContent = [
+      'Email,Display Name,Email Verified,Disabled,Created At,Project',
+      ...filteredUsers.map(user => 
+        `${user.email},${user.displayName || ''},${user.emailVerified},${user.disabled},${user.createdAt || ''},${user.projectName || ''}`
+      )
+    ].join('\n');
+    
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `users_${selectedProject || 'all_projects'}_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+  };
+
   const filteredUsers = getFilteredUsers();
+
+  // Auto-load users when component mounts or active projects change
+  useEffect(() => {
+    if (activeProjects.length > 0) {
+      handleRefreshUsers();
+    }
+  }, [activeProjects.length]);
 
   return (
     <div className="p-8 space-y-8">
@@ -170,6 +243,14 @@ export const EnhancedUsersPage = () => {
             <Upload className="w-4 h-4 mr-2" />
             Import Users
           </Button>
+          <Button
+            onClick={exportUsers}
+            variant="outline"
+            className="border-gray-600 text-gray-300 hover:bg-gray-700"
+          >
+            <Download className="w-4 h-4 mr-2" />
+            Export CSV
+          </Button>
           {selectedUsers.size > 0 && (
             <Button
               onClick={handleBulkDelete}
@@ -183,7 +264,7 @@ export const EnhancedUsersPage = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
           <Input
@@ -211,17 +292,25 @@ export const EnhancedUsersPage = () => {
         </Select>
         <Button
           variant="outline"
-          onClick={() => {
-            if (selectedProject) {
-              handleRefreshUsers(selectedProject);
-            } else {
-              activeProjects.forEach(p => handleRefreshUsers(p.id));
-            }
-          }}
+          onClick={() => handleRefreshUsers(selectedProject || undefined)}
+          disabled={loadingUsers}
           className="border-gray-600 text-gray-300 hover:bg-gray-700"
         >
-          <RefreshCw className="w-4 h-4 mr-2" />
+          {loadingUsers ? (
+            <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+          ) : (
+            <RefreshCw className="w-4 h-4 mr-2" />
+          )}
           Refresh Users
+        </Button>
+        <Button
+          variant="destructive"
+          onClick={handleDeleteAllUsers}
+          disabled={filteredUsers.length === 0}
+          className="bg-red-600 hover:bg-red-700"
+        >
+          <Trash2 className="w-4 h-4 mr-2" />
+          Delete All
         </Button>
       </div>
 
@@ -243,21 +332,24 @@ export const EnhancedUsersPage = () => {
                 <Users className="w-5 h-5" />
                 Users ({filteredUsers.length})
               </span>
-              <div className="flex gap-2">
-                {activeProjects.map(project => {
-                  const userCount = users[project.id]?.length || 0;
-                  const isLoading = loadingUsers[project.id];
-                  return (
-                    <Badge key={project.id} className="bg-blue-500/20 text-blue-400">
-                      {project.name}: {isLoading ? '...' : userCount}
-                    </Badge>
-                  );
-                })}
+              <div className="flex items-center gap-4">
+                <span className="text-gray-400 text-sm">
+                  {selectedUsers.size} selected
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleSelectAll}
+                  disabled={filteredUsers.length === 0}
+                  className="border-gray-600 text-gray-300 hover:bg-gray-700"
+                >
+                  {selectedUsers.size === filteredUsers.length ? 'Deselect All' : 'Select All'}
+                </Button>
               </div>
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {Object.values(loadingUsers).some(loading => loading) && (
+            {loadingUsers && (
               <div className="flex items-center justify-center py-4 mb-4">
                 <div className="animate-spin w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full mr-2" />
                 <span className="text-gray-400">Loading users...</span>
@@ -321,7 +413,7 @@ export const EnhancedUsersPage = () => {
               <div className="text-center py-8">
                 <Users className="w-12 h-12 text-gray-500 mx-auto mb-4" />
                 <h3 className="text-lg font-semibold text-white mb-2">
-                  {Object.values(loadingUsers).some(loading => loading) ? 'Loading Users...' : 'No Users Found'}
+                  {loadingUsers ? 'Loading Users...' : 'No Users Found'}
                 </h3>
                 <p className="text-gray-400">
                   {searchTerm ? 'No users match your search criteria.' : 'No users found in the selected projects.'}

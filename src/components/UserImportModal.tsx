@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
 import { Progress } from '@/components/ui/progress';
 
@@ -20,7 +21,8 @@ export const UserImportModal: React.FC<UserImportModalProps> = ({ isOpen, onClos
   const { importUsers } = useEnhancedApp();
   const { toast } = useToast();
   const [emails, setEmails] = useState('');
-  const [selectedProject, setSelectedProject] = useState('');
+  const [selectedProjects, setSelectedProjects] = useState<string[]>([]);
+  const [distributeEvenly, setDistributeEvenly] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [importProgress, setImportProgress] = useState(0);
 
@@ -46,11 +48,33 @@ export const UserImportModal: React.FC<UserImportModalProps> = ({ isOpen, onClos
       .filter((email, index, arr) => arr.indexOf(email) === index);
   };
 
+  const handleProjectToggle = (projectId: string) => {
+    setSelectedProjects(prev => {
+      if (prev.includes(projectId)) {
+        return prev.filter(id => id !== projectId);
+      } else {
+        return [...prev, projectId];
+      }
+    });
+  };
+
+  const distributeEmailsEvenly = (emails: string[], projectIds: string[]) => {
+    const distribution: { [projectId: string]: string[] } = {};
+    projectIds.forEach(id => distribution[id] = []);
+
+    emails.forEach((email, index) => {
+      const projectIndex = index % projectIds.length;
+      distribution[projectIds[projectIndex]].push(email);
+    });
+
+    return distribution;
+  };
+
   const handleImport = async () => {
-    if (!selectedProject) {
+    if (selectedProjects.length === 0) {
       toast({
-        title: "No project selected",
-        description: "Please select a project to import users to.",
+        title: "No projects selected",
+        description: "Please select at least one project to import users to.",
         variant: "destructive",
       });
       return;
@@ -75,20 +99,36 @@ export const UserImportModal: React.FC<UserImportModalProps> = ({ isOpen, onClos
         setImportProgress(prev => Math.min(prev + 10, 90));
       }, 200);
 
-      const imported = await importUsers([selectedProject], emailList);
+      let totalImported = 0;
+
+      if (distributeEvenly && selectedProjects.length > 1) {
+        // Distribute emails evenly across selected projects
+        const distribution = distributeEmailsEvenly(emailList, selectedProjects);
+        
+        for (const [projectId, projectEmails] of Object.entries(distribution)) {
+          if (projectEmails.length > 0) {
+            const imported = await importUsers([projectId], projectEmails);
+            totalImported += imported;
+          }
+        }
+      } else {
+        // Import all emails to all selected projects
+        totalImported = await importUsers(selectedProjects, emailList);
+      }
       
       clearInterval(progressInterval);
       setImportProgress(100);
       
       toast({
         title: "Import completed",
-        description: `Successfully imported ${imported} out of ${emailList.length} users.`,
+        description: `Successfully imported ${totalImported} users${distributeEvenly ? ' (distributed evenly)' : ''}.`,
       });
       
       setTimeout(() => {
         onClose();
         setEmails('');
-        setSelectedProject('');
+        setSelectedProjects([]);
+        setDistributeEvenly(false);
       }, 1000);
       
     } catch (error) {
@@ -116,20 +156,37 @@ export const UserImportModal: React.FC<UserImportModalProps> = ({ isOpen, onClos
         </CardHeader>
         <CardContent className="space-y-6">
           <div>
-            <Label className="text-gray-300">Select Project</Label>
-            <Select value={selectedProject} onValueChange={setSelectedProject}>
-              <SelectTrigger className="bg-gray-700 border-gray-600 text-white">
-                <SelectValue placeholder="Choose a project" />
-              </SelectTrigger>
-              <SelectContent className="bg-gray-700 border-gray-600">
-                {availableProjects.map((project) => (
-                  <SelectItem key={project.id} value={project.id} className="text-white hover:bg-gray-600">
+            <Label className="text-gray-300">Select Projects ({selectedProjects.length} selected)</Label>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2 max-h-40 overflow-y-auto border border-gray-600 rounded-lg p-3">
+              {availableProjects.map((project) => (
+                <div key={project.id} className="flex items-center space-x-2">
+                  <Checkbox
+                    id={`project-${project.id}`}
+                    checked={selectedProjects.includes(project.id)}
+                    onCheckedChange={() => handleProjectToggle(project.id)}
+                    className="border-gray-500"
+                  />
+                  <Label htmlFor={`project-${project.id}`} className="text-white text-sm cursor-pointer">
                     {project.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+                  </Label>
+                </div>
+              ))}
+            </div>
           </div>
+
+          {selectedProjects.length > 1 && (
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="distribute-evenly"
+                checked={distributeEvenly}
+                onCheckedChange={setDistributeEvenly}
+                className="border-gray-500"
+              />
+              <Label htmlFor="distribute-evenly" className="text-white text-sm cursor-pointer">
+                Distribute emails evenly across selected projects
+              </Label>
+            </div>
+          )}
 
           <div>
             <Label className="text-gray-300">Upload CSV/TXT File</Label>
@@ -174,6 +231,11 @@ export const UserImportModal: React.FC<UserImportModalProps> = ({ isOpen, onClos
                   {emailList.length} valid emails found
                 </span>
               </div>
+              {distributeEvenly && selectedProjects.length > 1 && (
+                <div className="text-sm text-blue-400 mb-2">
+                  Will be distributed evenly: ~{Math.ceil(emailList.length / selectedProjects.length)} emails per project
+                </div>
+              )}
               <div className="text-gray-400 text-sm max-h-32 overflow-y-auto">
                 {emailList.slice(0, 10).map((email, index) => (
                   <div key={index}>{email}</div>
@@ -199,12 +261,12 @@ export const UserImportModal: React.FC<UserImportModalProps> = ({ isOpen, onClos
             <div className="flex items-start gap-2">
               <AlertCircle className="w-4 h-4 text-blue-400 mt-0.5" />
               <div className="text-blue-300 text-sm">
-                <p className="font-medium mb-1">Import Notes:</p>
+                <p className="font-medium mb-1">Import Options:</p>
                 <ul className="text-xs space-y-1">
+                  <li>• Select multiple projects to import to all of them</li>
+                  <li>• Enable "Distribute evenly" to split emails across projects</li>
                   <li>• Duplicate emails will be automatically removed</li>
-                  <li>• Users will be imported in batches of 100</li>
-                  <li>• Invalid email formats will be skipped</li>
-                  <li>• Import may take several minutes for large lists</li>
+                  <li>• Users will be imported in batches for better performance</li>
                 </ul>
               </div>
             </div>
@@ -213,7 +275,7 @@ export const UserImportModal: React.FC<UserImportModalProps> = ({ isOpen, onClos
           <div className="flex gap-2">
             <Button
               onClick={handleImport}
-              disabled={emailList.length === 0 || isImporting || !selectedProject}
+              disabled={emailList.length === 0 || isImporting || selectedProjects.length === 0}
               className="bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800"
             >
               {isImporting ? (
