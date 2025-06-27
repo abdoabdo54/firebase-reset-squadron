@@ -75,7 +75,7 @@ export const UserImportModal: React.FC<UserImportModalProps> = ({ isOpen, onClos
         setImportProgress(prev => Math.min(prev + 10, 90));
       }, 200);
 
-      const imported = await importUsers(selectedProject, emailList);
+      const imported = await importUsers([selectedProject], emailList);
       
       clearInterval(progressInterval);
       setImportProgress(100);
