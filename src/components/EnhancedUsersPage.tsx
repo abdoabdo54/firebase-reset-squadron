@@ -1,491 +1,382 @@
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useEnhancedApp } from '@/contexts/EnhancedAppContext';
-import { Users, Upload, Trash2, Search, RefreshCw, UserX, Download } from 'lucide-react';
+import { Upload, Users, Trash2, Download, Filter, Search, Plus } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Badge } from '@/components/ui/badge';
+import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Badge } from '@/components/ui/badge';
+import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
-import { UserImportModal } from './UserImportModal';
 
 export const EnhancedUsersPage = () => {
   const { 
     projects, 
     users, 
-    profiles, 
-    activeProfile, 
     loadUsers, 
-    deleteUser,
+    importUsers, 
     bulkDeleteUsers, 
-    loading 
+    loading,
+    getDailyCount 
   } = useEnhancedApp();
   const { toast } = useToast();
   
+  const [selectedProjects, setSelectedProjects] = useState<Set<string>>(new Set());
+  const [emailsText, setEmailsText] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedProject, setSelectedProject] = useState<string>('');
-  const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set());
-  const [showImportModal, setShowImportModal] = useState(false);
-  const [loadingUsers, setLoadingUsers] = useState(false);
-  const [userLoadError, setUserLoadError] = useState<string>('');
+  const [showImportForm, setShowImportForm] = useState(false);
 
-  // Filter projects by active profile
-  const activeProjects = projects.filter(p => 
-    (!activeProfile || p.profileId === activeProfile) && p.status === 'active'
+  const handleProjectSelect = (projectId: string, checked: boolean) => {
+    const newSelected = new Set(selectedProjects);
+    if (checked) {
+      newSelected.add(projectId);
+      // Auto-load users for selected project
+      loadUsers(projectId);
+    } else {
+      newSelected.delete(projectId);
+    }
+    setSelectedProjects(newSelected);
+  };
+
+  const handleImportUsers = async () => {
+    const emails = emailsText
+      .split('\n')
+      .map(email => email.trim())
+      .filter(email => email && email.includes('@'));
+
+    if (emails.length === 0) {
+      toast({
+        title: "Error",
+        description: "Please enter valid email addresses.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (selectedProjects.size === 0) {
+      toast({
+        title: "Error",
+        description: "Please select at least one project.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      await importUsers(emails, Array.from(selectedProjects));
+      setEmailsText('');
+      setShowImportForm(false);
+      
+      toast({
+        title: "Import Successful",
+        description: `Successfully imported ${emails.length} users across ${selectedProjects.size} projects.`,
+      });
+    } catch (error) {
+      console.error('Import failed:', error);
+    }
+  };
+
+  const handleBulkDelete = async (userIds?: string[]) => {
+    if (selectedProjects.size === 0) {
+      toast({
+        title: "Error",
+        description: "Please select at least one project.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const confirmMessage = userIds 
+      ? `Delete ${userIds.length} selected users from ${selectedProjects.size} projects?`
+      : `Delete ALL users from ${selectedProjects.size} selected projects?`;
+
+    if (!confirm(confirmMessage)) return;
+
+    try {
+      await bulkDeleteUsers(Array.from(selectedProjects), userIds);
+      
+      toast({
+        title: "Deletion Successful",
+        description: userIds 
+          ? `Deleted ${userIds.length} users from ${selectedProjects.size} projects.`
+          : `Deleted all users from ${selectedProjects.size} projects.`,
+      });
+    } catch (error) {
+      console.error('Bulk delete failed:', error);
+    }
+  };
+
+  const getTotalUsers = () => {
+    return Object.values(users).reduce((sum, projectUsers) => sum + projectUsers.length, 0);
+  };
+
+  const getActiveUsers = () => {
+    return Object.values(users).reduce((sum, projectUsers) => 
+      sum + projectUsers.filter(user => !user.disabled).length, 0
+    );
+  };
+
+  const filteredProjects = projects.filter(project => 
+    project.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    project.adminEmail.toLowerCase().includes(searchTerm.toLowerCase())
   );
-
-  const activeProfileName = profiles.find(p => p.id === activeProfile)?.name || 'All Projects';
-
-  const handleRefreshUsers = async (projectId?: string) => {
-    setLoadingUsers(true);
-    setUserLoadError('');
-    
-    try {
-      console.log('Loading users for projects:', projectId ? [projectId] : activeProjects.map(p => p.id));
-      
-      if (projectId) {
-        console.log('Loading users for specific project:', projectId);
-        await loadUsers(projectId);
-        console.log('Users loaded for project:', projectId, users[projectId]?.length || 0);
-      } else {
-        // Load users for all active projects
-        console.log('Loading users for all active projects:', activeProjects.length);
-        for (const project of activeProjects) {
-          console.log('Loading users for project:', project.id, project.name);
-          try {
-            await loadUsers(project.id);
-            console.log('Users loaded for project:', project.id, users[project.id]?.length || 0);
-          } catch (error) {
-            console.error('Failed to load users for project:', project.id, error);
-            setUserLoadError(`Failed to load users for project ${project.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
-          }
-        }
-      }
-      
-      toast({
-        title: "Users Refreshed",
-        description: "User list has been updated successfully.",
-      });
-    } catch (error) {
-      console.error('Failed to refresh users:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      setUserLoadError(`Failed to refresh users: ${errorMessage}`);
-      toast({
-        title: "Error",
-        description: `Failed to refresh users: ${errorMessage}`,
-        variant: "destructive",
-      });
-    } finally {
-      setLoadingUsers(false);
-    }
-  };
-
-  const handleDeleteUser = async (projectId: string, userId: string) => {
-    if (!confirm('Are you sure you want to delete this user?')) {
-      return;
-    }
-
-    try {
-      await deleteUser(projectId, userId);
-      toast({
-        title: "User Deleted",
-        description: "User has been deleted successfully.",
-      });
-    } catch (error) {
-      console.error('Failed to delete user:', error);
-      toast({
-        title: "Error",
-        description: "Failed to delete user.",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const handleBulkDelete = async () => {
-    if (selectedUsers.size === 0) {
-      toast({
-        title: "No Users Selected",
-        description: "Please select users to delete.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    if (!confirm(`Are you sure you want to delete ${selectedUsers.size} selected users?`)) {
-      return;
-    }
-
-    try {
-      const projectIds = selectedProject ? [selectedProject] : activeProjects.map(p => p.id);
-      await bulkDeleteUsers(projectIds, Array.from(selectedUsers));
-      setSelectedUsers(new Set());
-      toast({
-        title: "Users Deleted",
-        description: `Successfully deleted ${selectedUsers.size} users.`,
-      });
-    } catch (error) {
-      console.error('Failed to bulk delete users:', error);
-      toast({
-        title: "Error",
-        description: "Failed to delete users.",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const handleDeleteAllUsers = async () => {
-    const projectIds = selectedProject ? [selectedProject] : activeProjects.map(p => p.id);
-    const totalUsers = projectIds.reduce((sum, pid) => sum + (users[pid]?.length || 0), 0);
-    
-    if (totalUsers === 0) {
-      toast({
-        title: "No Users Found",
-        description: "No users to delete.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    if (!confirm(`Are you sure you want to delete ALL ${totalUsers} users from ${selectedProject ? '1 project' : `${projectIds.length} projects`}?`)) {
-      return;
-    }
-
-    try {
-      const allUserIds = projectIds.flatMap(pid => (users[pid] || []).map(u => u.uid));
-      await bulkDeleteUsers(projectIds, allUserIds);
-      setSelectedUsers(new Set());
-      toast({
-        title: "All Users Deleted",
-        description: `Successfully deleted ${totalUsers} users.`,
-      });
-    } catch (error) {
-      console.error('Failed to delete all users:', error);
-      toast({
-        title: "Error",
-        description: "Failed to delete all users.",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const toggleUserSelection = (userId: string) => {
-    const newSelected = new Set(selectedUsers);
-    if (newSelected.has(userId)) {
-      newSelected.delete(userId);
-    } else {
-      newSelected.add(userId);
-    }
-    setSelectedUsers(newSelected);
-  };
-
-  const handleSelectAll = () => {
-    const filteredUsers = getFilteredUsers();
-    if (selectedUsers.size === filteredUsers.length) {
-      setSelectedUsers(new Set());
-    } else {
-      setSelectedUsers(new Set(filteredUsers.map(user => user.uid)));
-    }
-  };
-
-  const getFilteredUsers = () => {
-    const projectsToShow = selectedProject ? [selectedProject] : activeProjects.map(p => p.id);
-    const allUsers = [];
-
-    for (const projectId of projectsToShow) {
-      const projectUsers = users[projectId] || [];
-      const project = projects.find(p => p.id === projectId);
-      
-      const filteredUsers = projectUsers.filter(user =>
-        user.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        user.displayName?.toLowerCase().includes(searchTerm.toLowerCase())
-      );
-
-      allUsers.push(...filteredUsers.map(user => ({ ...user, projectId, projectName: project?.name })));
-    }
-
-    return allUsers;
-  };
-
-  const exportUsers = () => {
-    const filteredUsers = getFilteredUsers();
-    if (filteredUsers.length === 0) {
-      toast({
-        title: "No Users to Export",
-        description: "No users found to export.",
-        variant: "destructive",
-      });
-      return;
-    }
-    
-    const csvContent = [
-      'Email,Display Name,Email Verified,Disabled,Created At,Project',
-      ...filteredUsers.map(user => 
-        `${user.email},${user.displayName || ''},${user.emailVerified},${user.disabled},${user.createdAt || ''},${user.projectName || ''}`
-      )
-    ].join('\n');
-    
-    const blob = new Blob([csvContent], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `users_${selectedProject || 'all_projects'}_${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
-    window.URL.revokeObjectURL(url);
-  };
-
-  const filteredUsers = getFilteredUsers();
-
-  // Auto-load users when component mounts or active projects change
-  useEffect(() => {
-    console.log('EnhancedUsersPage useEffect triggered');
-    console.log('Active projects:', activeProjects.length);
-    console.log('Active profile:', activeProfile);
-    
-    if (activeProjects.length > 0) {
-      console.log('Auto-loading users for active projects');
-      handleRefreshUsers();
-    }
-  }, [activeProfile]); // Only depend on activeProfile to avoid infinite loops
 
   return (
     <div className="p-8 space-y-8">
+      {/* Header */}
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-3xl font-bold text-white mb-2">User Management</h1>
-          <p className="text-gray-400">
-            Profile: <span className="text-blue-400 font-medium">{activeProfileName}</span> • 
-            Manage Firebase Authentication users across your projects
-          </p>
-          {userLoadError && (
-            <div className="mt-2 p-3 bg-red-900/20 border border-red-500/30 rounded-lg">
-              <p className="text-red-400 text-sm">{userLoadError}</p>
-            </div>
-          )}
+          <h1 className="text-3xl font-bold text-white mb-2">Enhanced User Management</h1>
+          <p className="text-gray-400">Manage users across multiple Firebase projects simultaneously</p>
         </div>
         <div className="flex gap-2">
           <Button
-            onClick={() => setShowImportModal(true)}
-            className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
+            onClick={() => setShowImportForm(true)}
+            className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800"
           >
             <Upload className="w-4 h-4 mr-2" />
             Import Users
           </Button>
           <Button
-            onClick={exportUsers}
+            onClick={() => handleBulkDelete()}
+            disabled={selectedProjects.size === 0}
             variant="outline"
-            className="border-gray-600 text-gray-300 hover:bg-gray-700"
+            className="border-red-600 text-red-400 hover:bg-red-900/20"
           >
-            <Download className="w-4 h-4 mr-2" />
-            Export CSV
+            <Trash2 className="w-4 h-4 mr-2" />
+            Delete All
           </Button>
-          {selectedUsers.size > 0 && (
-            <Button
-              onClick={handleBulkDelete}
-              variant="destructive"
-              className="bg-red-600 hover:bg-red-700"
-            >
-              <Trash2 className="w-4 h-4 mr-2" />
-              Delete Selected ({selectedUsers.size})
-            </Button>
-          )}
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-          <Input
-            placeholder="Search users by email or name..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-10 bg-gray-800 border-gray-700 text-white"
-          />
-        </div>
-        <Select value={selectedProject} onValueChange={setSelectedProject}>
-          <SelectTrigger className="bg-gray-800 border-gray-700 text-white">
-            <SelectValue placeholder="All projects in profile" />
-          </SelectTrigger>
-          <SelectContent className="bg-gray-800 border-gray-700">
-            <SelectItem value="" className="text-white hover:bg-gray-700">All Projects</SelectItem>
-            {activeProjects.map((project) => (
-              <SelectItem key={project.id} value={project.id} className="text-white hover:bg-gray-700">
-                <div className="flex items-center gap-2">
-                  <div className={`w-2 h-2 rounded-full ${
-                    project.status === 'active' ? 'bg-green-500' :
-                    project.status === 'error' ? 'bg-red-500' : 'bg-yellow-500'
-                  }`} />
-                  {project.name}
-                </div>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Button
-          variant="outline"
-          onClick={() => handleRefreshUsers(selectedProject || undefined)}
-          disabled={loadingUsers}
-          className="border-gray-600 text-gray-300 hover:bg-gray-700"
-        >
-          {loadingUsers ? (
-            <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-          ) : (
-            <RefreshCw className="w-4 h-4 mr-2" />
-          )}
-          Refresh Users
-        </Button>
-        <Button
-          variant="destructive"
-          onClick={handleDeleteAllUsers}
-          disabled={filteredUsers.length === 0}
-          className="bg-red-600 hover:bg-red-700"
-        >
-          <Trash2 className="w-4 h-4 mr-2" />
-          Delete All
-        </Button>
-      </div>
-
-      {activeProjects.length === 0 ? (
-        <Card className="bg-gray-800 border-gray-700">
-          <CardContent className="py-12 text-center">
-            <Users className="w-12 h-12 text-gray-500 mx-auto mb-4" />
-            <h3 className="text-xl font-semibold text-white mb-2">No Active Projects</h3>
-            <p className="text-gray-400">
-              Add some Firebase projects to the current profile to manage users.
-            </p>
-            <div className="mt-4 text-sm text-gray-500">
-              Current profile: {activeProfileName} | Total projects: {projects.length} | Active projects: {activeProjects.length}
+      {/* Summary Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <Card className="bg-gradient-to-r from-blue-900/30 to-blue-800/30 border-blue-500/30">
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-blue-300 text-sm font-medium">Total Projects</p>
+                <p className="text-3xl font-bold text-white">{projects.length}</p>
+              </div>
+              <div className="p-3 bg-blue-500/20 rounded-full">
+                <Users className="w-6 h-6 text-blue-400" />
+              </div>
             </div>
           </CardContent>
         </Card>
-      ) : (
+
+        <Card className="bg-gradient-to-r from-green-900/30 to-green-800/30 border-green-500/30">
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-green-300 text-sm font-medium">Total Users</p>
+                <p className="text-3xl font-bold text-white">{getTotalUsers()}</p>
+              </div>
+              <div className="p-3 bg-green-500/20 rounded-full">
+                <Users className="w-6 h-6 text-green-400" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-gradient-to-r from-purple-900/30 to-purple-800/30 border-purple-500/30">
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-purple-300 text-sm font-medium">Active Users</p>
+                <p className="text-3xl font-bold text-white">{getActiveUsers()}</p>
+              </div>
+              <div className="p-3 bg-purple-500/20 rounded-full">
+                <Users className="w-6 h-6 text-purple-400" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-gradient-to-r from-orange-900/30 to-orange-800/30 border-orange-500/30">
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-orange-300 text-sm font-medium">Selected Projects</p>
+                <p className="text-3xl font-bold text-white">{selectedProjects.size}</p>
+              </div>
+              <div className="p-3 bg-orange-500/20 rounded-full">
+                <Filter className="w-6 h-6 text-orange-400" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Import Form */}
+      {showImportForm && (
         <Card className="bg-gray-800 border-gray-700">
           <CardHeader>
-            <CardTitle className="text-white flex items-center justify-between">
-              <span className="flex items-center gap-2">
-                <Users className="w-5 h-5" />
-                Users ({filteredUsers.length})
-              </span>
-              <div className="flex items-center gap-4">
-                <span className="text-gray-400 text-sm">
-                  {selectedUsers.size} selected
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleSelectAll}
-                  disabled={filteredUsers.length === 0}
-                  className="border-gray-600 text-gray-300 hover:bg-gray-700"
-                >
-                  {selectedUsers.size === filteredUsers.length ? 'Deselect All' : 'Select All'}
-                </Button>
-              </div>
-            </CardTitle>
+            <CardTitle className="text-white">Import Users to Multiple Projects</CardTitle>
           </CardHeader>
-          <CardContent>
-            {loadingUsers && (
-              <div className="flex items-center justify-center py-4 mb-4">
-                <div className="animate-spin w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full mr-2" />
-                <span className="text-gray-400">Loading users...</span>
-              </div>
-            )}
-
-            {/* Debug information */}
-            <div className="mb-4 p-3 bg-gray-700 rounded-lg text-xs text-gray-400">
-              <div>Debug Info:</div>
-              <div>Active Profile: {activeProfile || 'None'}</div>
-              <div>Active Projects: {activeProjects.length}</div>
-              <div>Projects with users: {Object.keys(users).length}</div>
-              <div>Total users across all projects: {Object.values(users).reduce((sum, userList) => sum + userList.length, 0)}</div>
-              {activeProjects.map(project => (
-                <div key={project.id}>
-                  Project {project.name} ({project.id}): {users[project.id]?.length || 0} users
-                </div>
-              ))}
+          <CardContent className="space-y-4">
+            <div>
+              <Label className="text-gray-300">Email Addresses (one per line)</Label>
+              <textarea
+                value={emailsText}
+                onChange={(e) => setEmailsText(e.target.value)}
+                placeholder="user1@example.com&#10;user2@example.com&#10;user3@example.com"
+                className="w-full h-32 mt-1 p-3 bg-gray-700 border border-gray-600 rounded-md text-white"
+              />
             </div>
             
-            {filteredUsers.length > 0 ? (
-              <div className="space-y-4">
-                <div className="max-h-96 overflow-y-auto">
-                  {filteredUsers.map((user) => (
-                    <div
-                      key={`${user.projectId}-${user.uid}`}
-                      className="flex items-center gap-4 p-4 rounded-lg bg-gray-700 hover:bg-gray-600 transition-colors"
-                    >
-                      <Checkbox
-                        checked={selectedUsers.has(user.uid)}
-                        onCheckedChange={() => toggleUserSelection(user.uid)}
-                        className="border-gray-500"
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <p className="font-medium text-white truncate">{user.email}</p>
-                          <Badge className="bg-gray-600 text-gray-300 text-xs">
-                            {user.projectName}
-                          </Badge>
-                        </div>
-                        {user.displayName && (
-                          <p className="text-sm text-gray-400">{user.displayName}</p>
-                        )}
-                        <div className="flex items-center gap-4 mt-2 text-xs text-gray-500">
-                          <span>UID: {user.uid}</span>
-                          <span className={`px-2 py-1 rounded ${
-                            user.emailVerified 
-                              ? 'bg-green-500/20 text-green-400' 
-                              : 'bg-red-500/20 text-red-400'
-                          }`}>
-                            {user.emailVerified ? 'Verified' : 'Unverified'}
-                          </span>
-                          <span className={`px-2 py-1 rounded ${
-                            user.disabled 
-                              ? 'bg-red-500/20 text-red-400' 
-                              : 'bg-green-500/20 text-green-400'
-                          }`}>
-                            {user.disabled ? 'Disabled' : 'Active'}
-                          </span>
-                        </div>
-                      </div>
-                      <Button
-                        size="sm"
-                        variant="destructive"
-                        onClick={() => handleDeleteUser(user.projectId, user.uid)}
-                        className="shrink-0"
-                      >
-                        <UserX className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <div className="text-center py-8">
-                <Users className="w-12 h-12 text-gray-500 mx-auto mb-4" />
-                <h3 className="text-lg font-semibold text-white mb-2">
-                  {loadingUsers ? 'Loading Users...' : 'No Users Found'}
-                </h3>
-                <p className="text-gray-400">
-                  {searchTerm ? 'No users match your search criteria.' : 'No users found in the selected projects.'}
-                </p>
-                {userLoadError && (
-                  <div className="mt-4 p-3 bg-red-900/20 border border-red-500/30 rounded-lg">
-                    <p className="text-red-400 text-sm">Backend Error: {userLoadError}</p>
-                    <p className="text-gray-400 text-xs mt-1">
-                      Check your backend server and Firebase project configuration.
-                    </p>
+            <div>
+              <Label className="text-gray-300">Select Target Projects</Label>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2">
+                {projects.map((project) => (
+                  <div key={project.id} className="flex items-center space-x-2">
+                    <Checkbox
+                      checked={selectedProjects.has(project.id)}
+                      onCheckedChange={(checked) => handleProjectSelect(project.id, checked as boolean)}
+                    />
+                    <span className="text-white">{project.name}</span>
                   </div>
-                )}
+                ))}
               </div>
-            )}
+            </div>
+
+            <div className="flex gap-2">
+              <Button
+                onClick={handleImportUsers}
+                disabled={loading}
+                className="bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800"
+              >
+                {loading ? 'Importing...' : 'Import Users'}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setShowImportForm(false)}
+                className="border-gray-600 text-gray-300 hover:bg-gray-700"
+              >
+                Cancel
+              </Button>
+            </div>
           </CardContent>
         </Card>
       )}
 
-      <UserImportModal
-        isOpen={showImportModal}
-        onClose={() => setShowImportModal(false)}
-        availableProjects={activeProjects}
-      />
+      {/* Search */}
+      <div className="flex items-center gap-4">
+        <div className="relative flex-1 max-w-md">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+          <Input
+            placeholder="Search projects..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-10 bg-gray-700 border-gray-600 text-white"
+          />
+        </div>
+      </div>
+
+      {/* Projects List */}
+      <div className="space-y-4">
+        <h2 className="text-xl font-semibold text-white">Projects & Users</h2>
+        <div className="grid grid-cols-1 gap-4">
+          {filteredProjects.map((project) => {
+            const projectUsers = users[project.id] || [];
+            const activeUsers = projectUsers.filter(user => !user.disabled);
+            const dailyCount = getDailyCount(project.id);
+            
+            return (
+              <Card key={project.id} className="bg-gray-800 border-gray-700">
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <Checkbox
+                        checked={selectedProjects.has(project.id)}
+                        onCheckedChange={(checked) => handleProjectSelect(project.id, checked as boolean)}
+                      />
+                      <div>
+                        <CardTitle className="text-white">{project.name}</CardTitle>
+                        <p className="text-gray-400 text-sm">{project.adminEmail}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <Badge className="bg-blue-500/20 text-blue-400">
+                        {projectUsers.length} total
+                      </Badge>
+                      <Badge className="bg-green-500/20 text-green-400">
+                        {activeUsers.length} active
+                      </Badge>
+                      <Badge className="bg-orange-500/20 text-orange-400">
+                        {dailyCount} sent today
+                      </Badge>
+                    </div>
+                  </div>
+                </CardHeader>
+                
+                {selectedProjects.has(project.id) && (
+                  <CardContent>
+                    <div className="space-y-4">
+                      <div className="flex justify-between items-center">
+                        <span className="text-gray-300">Users in this project</span>
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            onClick={() => loadUsers(project.id)}
+                            variant="outline"
+                            className="border-gray-600 text-gray-300 hover:bg-gray-700"
+                          >
+                            Refresh
+                          </Button>
+                          <Button
+                            size="sm"
+                            onClick={() => handleBulkDelete()}
+                            variant="outline"
+                            className="border-red-600 text-red-400 hover:bg-red-900/20"
+                          >
+                            <Trash2 className="w-3 h-3 mr-1" />
+                            Delete All
+                          </Button>
+                        </div>
+                      </div>
+                      
+                      {projectUsers.length > 0 ? (
+                        <div className="max-h-40 overflow-y-auto space-y-2">
+                          {projectUsers.slice(0, 10).map((user) => (
+                            <div key={user.uid} className="flex items-center justify-between py-2 px-3 bg-gray-700 rounded">
+                              <div>
+                                <span className="text-white text-sm">{user.email}</span>
+                                {user.displayName && (
+                                  <span className="text-gray-400 text-xs ml-2">({user.displayName})</span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2">
+                                {user.emailVerified && (
+                                  <Badge className="bg-green-500/20 text-green-400 text-xs">Verified</Badge>
+                                )}
+                                {user.disabled && (
+                                  <Badge className="bg-red-500/20 text-red-400 text-xs">Disabled</Badge>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                          {projectUsers.length > 10 && (
+                            <p className="text-gray-500 text-center text-sm">
+                              ... and {projectUsers.length - 10} more users
+                            </p>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="text-center py-8 text-gray-500">
+                          No users found in this project
+                        </div>
+                      )}
+                    </div>
+                  </CardContent>
+                )}
+              </Card>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 };

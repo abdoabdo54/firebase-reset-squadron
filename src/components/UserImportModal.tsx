@@ -1,32 +1,27 @@
 
 import { useState } from 'react';
-import { useEnhancedApp } from '@/contexts/EnhancedAppContext';
+import { useApp } from '@/contexts/AppContext';
 import { Upload, Download, FileText, Users, AlertCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
 import { Progress } from '@/components/ui/progress';
 
 interface UserImportModalProps {
-  isOpen: boolean;
+  projectId: string;
   onClose: () => void;
-  availableProjects: any[];
 }
 
-export const UserImportModal: React.FC<UserImportModalProps> = ({ isOpen, onClose, availableProjects }) => {
-  const { importUsers } = useEnhancedApp();
+export const UserImportModal: React.FC<UserImportModalProps> = ({ projectId, onClose }) => {
+  const { importUsers, projects } = useApp();
   const { toast } = useToast();
   const [emails, setEmails] = useState('');
-  const [selectedProjects, setSelectedProjects] = useState<string[]>([]);
-  const [distributeEvenly, setDistributeEvenly] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [importProgress, setImportProgress] = useState(0);
 
-  if (!isOpen) return null;
+  const project = projects.find(p => p.id === projectId);
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -45,41 +40,10 @@ export const UserImportModal: React.FC<UserImportModalProps> = ({ isOpen, onClos
       .split(/[\n,;]/)
       .map(email => email.trim())
       .filter(email => email && email.includes('@'))
-      .filter((email, index, arr) => arr.indexOf(email) === index);
-  };
-
-  const handleProjectToggle = (projectId: string) => {
-    setSelectedProjects(prev => {
-      if (prev.includes(projectId)) {
-        return prev.filter(id => id !== projectId);
-      } else {
-        return [...prev, projectId];
-      }
-    });
-  };
-
-  const distributeEmailsEvenly = (emails: string[], projectIds: string[]) => {
-    const distribution: { [projectId: string]: string[] } = {};
-    projectIds.forEach(id => distribution[id] = []);
-
-    emails.forEach((email, index) => {
-      const projectIndex = index % projectIds.length;
-      distribution[projectIds[projectIndex]].push(email);
-    });
-
-    return distribution;
+      .filter((email, index, arr) => arr.indexOf(email) === index); // Remove duplicates
   };
 
   const handleImport = async () => {
-    if (selectedProjects.length === 0) {
-      toast({
-        title: "No projects selected",
-        description: "Please select at least one project to import users to.",
-        variant: "destructive",
-      });
-      return;
-    }
-
     const emailList = parseEmails(emails);
     
     if (emailList.length === 0) {
@@ -95,40 +59,23 @@ export const UserImportModal: React.FC<UserImportModalProps> = ({ isOpen, onClos
     setImportProgress(0);
 
     try {
+      // Simulate progress updates
       const progressInterval = setInterval(() => {
         setImportProgress(prev => Math.min(prev + 10, 90));
       }, 200);
 
-      let totalImported = 0;
-
-      if (distributeEvenly && selectedProjects.length > 1) {
-        // Distribute emails evenly across selected projects
-        const distribution = distributeEmailsEvenly(emailList, selectedProjects);
-        
-        for (const [projectId, projectEmails] of Object.entries(distribution)) {
-          if (projectEmails.length > 0) {
-            const imported = await importUsers([projectId], projectEmails);
-            totalImported += imported;
-          }
-        }
-      } else {
-        // Import all emails to all selected projects
-        totalImported = await importUsers(selectedProjects, emailList);
-      }
+      const imported = await importUsers(projectId, emailList);
       
       clearInterval(progressInterval);
       setImportProgress(100);
       
       toast({
         title: "Import completed",
-        description: `Successfully imported ${totalImported} users${distributeEvenly ? ' (distributed evenly)' : ''}.`,
+        description: `Successfully imported ${imported} out of ${emailList.length} users.`,
       });
       
       setTimeout(() => {
         onClose();
-        setEmails('');
-        setSelectedProjects([]);
-        setDistributeEvenly(false);
       }, 1000);
       
     } catch (error) {
@@ -151,55 +98,10 @@ export const UserImportModal: React.FC<UserImportModalProps> = ({ isOpen, onClos
         <CardHeader>
           <CardTitle className="text-white flex items-center gap-2">
             <Upload className="w-5 h-5" />
-            Import Users
+            Import Users to {project?.name}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-6">
-          <div>
-            <Label className="text-gray-300">Select Projects ({selectedProjects.length} selected)</Label>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2 max-h-40 overflow-y-auto border border-gray-600 rounded-lg p-3">
-              {availableProjects.map((project) => (
-                <div key={project.id} className="flex items-center space-x-2">
-                  <Checkbox
-                    id={`project-${project.id}`}
-                    checked={selectedProjects.includes(project.id)}
-                    onCheckedChange={(checked) => {
-                      if (checked === true) {
-                        handleProjectToggle(project.id);
-                      } else if (checked === false) {
-                        setSelectedProjects(prev => prev.filter(id => id !== project.id));
-                      }
-                    }}
-                    className="border-gray-500"
-                  />
-                  <Label htmlFor={`project-${project.id}`} className="text-white text-sm cursor-pointer">
-                    {project.name}
-                  </Label>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {selectedProjects.length > 1 && (
-            <div className="flex items-center space-x-2">
-              <Checkbox
-                id="distribute-evenly"
-                checked={distributeEvenly}
-                onCheckedChange={(checked) => {
-                  if (checked === true) {
-                    setDistributeEvenly(true);
-                  } else if (checked === false) {
-                    setDistributeEvenly(false);
-                  }
-                }}
-                className="border-gray-500"
-              />
-              <Label htmlFor="distribute-evenly" className="text-white text-sm cursor-pointer">
-                Distribute emails evenly across selected projects
-              </Label>
-            </div>
-          )}
-
           <div>
             <Label className="text-gray-300">Upload CSV/TXT File</Label>
             <div className="mt-2">
@@ -243,11 +145,6 @@ export const UserImportModal: React.FC<UserImportModalProps> = ({ isOpen, onClos
                   {emailList.length} valid emails found
                 </span>
               </div>
-              {distributeEvenly && selectedProjects.length > 1 && (
-                <div className="text-sm text-blue-400 mb-2">
-                  Will be distributed evenly: ~{Math.ceil(emailList.length / selectedProjects.length)} emails per project
-                </div>
-              )}
               <div className="text-gray-400 text-sm max-h-32 overflow-y-auto">
                 {emailList.slice(0, 10).map((email, index) => (
                   <div key={index}>{email}</div>
@@ -273,12 +170,12 @@ export const UserImportModal: React.FC<UserImportModalProps> = ({ isOpen, onClos
             <div className="flex items-start gap-2">
               <AlertCircle className="w-4 h-4 text-blue-400 mt-0.5" />
               <div className="text-blue-300 text-sm">
-                <p className="font-medium mb-1">Import Options:</p>
+                <p className="font-medium mb-1">Import Notes:</p>
                 <ul className="text-xs space-y-1">
-                  <li>• Select multiple projects to import to all of them</li>
-                  <li>• Enable "Distribute evenly" to split emails across projects</li>
                   <li>• Duplicate emails will be automatically removed</li>
-                  <li>• Users will be imported in batches for better performance</li>
+                  <li>• Users will be imported in batches of 100</li>
+                  <li>• Invalid email formats will be skipped</li>
+                  <li>• Import may take several minutes for large lists</li>
                 </ul>
               </div>
             </div>
@@ -287,7 +184,7 @@ export const UserImportModal: React.FC<UserImportModalProps> = ({ isOpen, onClos
           <div className="flex gap-2">
             <Button
               onClick={handleImport}
-              disabled={emailList.length === 0 || isImporting || selectedProjects.length === 0}
+              disabled={emailList.length === 0 || isImporting}
               className="bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800"
             >
               {isImporting ? (

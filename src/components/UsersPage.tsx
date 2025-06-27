@@ -1,3 +1,4 @@
+
 import { useState, useEffect } from 'react';
 import { useApp } from '@/contexts/AppContext';
 import { Search, Users, RefreshCw, CheckSquare, Square, Upload, Trash2, Download } from 'lucide-react';
@@ -331,9 +332,8 @@ export const UsersPage = () => {
 
       {showImportModal && selectedProject && (
         <UserImportModal
-          isOpen={showImportModal}
+          projectId={selectedProject}
           onClose={() => setShowImportModal(false)}
-          availableProjects={projects.filter(p => p.id === selectedProject)}
         />
       )}
     </div>

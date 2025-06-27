@@ -1,7 +1,6 @@
+
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useToast } from '@/hooks/use-toast';
-import { Profile, localStorageService, StoredProject } from '@/services/LocalStorageService';
-import { LightningCampaignService } from '@/services/LightningCampaignService';
 
 // Types
 export interface User {
@@ -21,7 +20,6 @@ export interface Project {
   serviceAccount: any;
   status: 'loading' | 'active' | 'error';
   createdAt: string;
-  profileId?: string;
 }
 
 export interface Campaign {
@@ -58,7 +56,7 @@ interface EnhancedAppContextType {
   // Users
   users: { [projectId: string]: User[] };
   loadUsers: (projectId: string) => Promise<void>;
-  importUsers: (projectIds: string[], emails: string[]) => Promise<number>;
+  importUsers: (emails: string[], projectIds: string[]) => Promise<void>;
   bulkDeleteUsers: (projectIds: string[], userIds?: string[]) => Promise<void>;
   
   // Campaigns
@@ -78,21 +76,6 @@ interface EnhancedAppContextType {
   // Loading states
   loading: boolean;
   setLoading: (loading: boolean) => void;
-  
-  // Profiles
-  profiles: Profile[];
-  activeProfile?: string;
-  setActiveProfile: (profileId: string) => void;
-  addProfile: (profile: Omit<Profile, 'id' | 'createdAt'>) => void;
-  removeProfile: (profileId: string) => void;
-  updateProfile: (profileId: string, updates: Partial<Profile>) => void;
-  
-  // Lightning mode
-  startLightningCampaign: (campaignId: string) => Promise<void>;
-  isLightningMode: boolean;
-  
-  // Individual user deletion
-  deleteUser: (projectId: string, userId: string) => Promise<void>;
 }
 
 const EnhancedAppContext = createContext<EnhancedAppContextType | undefined>(undefined);
@@ -108,96 +91,22 @@ export const EnhancedAppProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [currentCampaign, setCurrentCampaign] = useState<Campaign | null>(null);
   const [dailyCounts, setDailyCounts] = useState<{ [key: string]: DailyCount }>({});
-  const [profiles, setProfiles] = useState<Profile[]>([]);
-  const [activeProfile, setActiveProfileState] = useState<string | undefined>();
-  const [isLightningMode, setIsLightningMode] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // Initialize with local storage
+  // Initialize
   useEffect(() => {
-    const data = localStorageService.loadData();
-    console.log('Loading data from localStorage:', data);
-    
-    if (data.profiles && data.profiles.length > 0) {
-      setProfiles(data.profiles);
-      console.log('Loaded profiles:', data.profiles);
-    }
-    
-    if (data.projects && data.projects.length > 0) {
-      setProjects(data.projects.map(p => ({
-        ...p,
-        status: 'loading' as const
-      })));
-      console.log('Loaded projects:', data.projects);
-    }
-    
-    if (data.activeProfile) {
-      setActiveProfileState(data.activeProfile);
-      console.log('Set active profile:', data.activeProfile);
-    } else if (data.profiles && data.profiles.length > 0) {
-      setActiveProfileState(data.profiles[0].id);
-      console.log('Set first profile as active:', data.profiles[0].id);
-    }
-    
     loadCampaigns();
     loadDailyCounts();
     
-    // Auto-save projects to backend
-    if (data.projects && data.projects.length > 0) {
-      data.projects.forEach(project => {
-        saveProjectToBackend(project);
-      });
-    }
-  }, []);
-
-  // Save to localStorage whenever data changes
-  useEffect(() => {
-    const data = localStorageService.loadData();
-    data.profiles = profiles;
-    data.projects = projects.map(p => ({
-      id: p.id,
-      name: p.name,
-      adminEmail: p.adminEmail,
-      apiKey: p.apiKey,
-      serviceAccount: p.serviceAccount,
-      status: p.status,
-      createdAt: p.createdAt,
-      profileId: p.profileId,
-    }));
-    data.activeProfile = activeProfile;
-    localStorageService.saveData(data);
-    console.log('Saved data to localStorage:', data);
-  }, [profiles, projects, activeProfile]);
-
-  // Auto-save project to backend with proper error handling
-  const saveProjectToBackend = async (project: any) => {
-    try {
-      console.log(`Auto-saving project ${project.name} to backend...`);
-      await apiCall('/projects', {
-        method: 'POST',
-        body: JSON.stringify({
-          id: project.id,
-          name: project.name,
-          adminEmail: project.adminEmail,
-          apiKey: project.apiKey,
-          serviceAccount: project.serviceAccount,
-        }),
-      });
-      console.log(`Project ${project.name} auto-saved to backend successfully`);
-      
-      // Update project status to active after successful save
-      setProjects(prev => prev.map(p => 
-        p.id === project.id ? { ...p, status: 'active' as const } : p
-      ));
-      
-    } catch (error) {
-      console.error(`Failed to auto-save project ${project.name}:`, error);
-      // Update project status to error
-      setProjects(prev => prev.map(p => 
-        p.id === project.id ? { ...p, status: 'error' as const } : p
-      ));
-    }
-  };
+    // Set up polling for active campaigns
+    const interval = setInterval(() => {
+      if (currentCampaign && currentCampaign.status === 'running') {
+        updateCampaignProgress(currentCampaign.id);
+      }
+    }, 2000);
+    
+    return () => clearInterval(interval);
+  }, [currentCampaign]);
 
   // API helpers
   const apiCall = async (endpoint: string, options: RequestInit = {}) => {
@@ -225,27 +134,29 @@ export const EnhancedAppProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const addProject = async (projectData: any) => {
     try {
       setLoading(true);
-      
-      const newProject: Project = {
-        id: projectData.id || Date.now().toString(),
-        name: projectData.name,
-        adminEmail: projectData.adminEmail,
-        apiKey: projectData.apiKey,
-        serviceAccount: projectData.serviceAccount,
-        status: 'loading',
-        createdAt: new Date().toISOString(),
-        profileId: activeProfile,
-      };
-      
-      setProjects(prev => [...prev, newProject]);
-      
-      // Auto-save to backend
-      await saveProjectToBackend(newProject);
-      
-      toast({
-        title: "Project Added",
-        description: `${projectData.name} has been added successfully and saved to backend.`,
+      const response = await apiCall('/projects', {
+        method: 'POST',
+        body: JSON.stringify(projectData),
       });
+      
+      if (response.success) {
+        const newProject: Project = {
+          id: response.project_id,
+          name: projectData.name,
+          adminEmail: projectData.adminEmail,
+          apiKey: projectData.apiKey,
+          serviceAccount: projectData.serviceAccount,
+          status: 'active',
+          createdAt: new Date().toISOString(),
+        };
+        
+        setProjects(prev => [...prev, newProject]);
+        
+        toast({
+          title: "Project Added",
+          description: `${projectData.name} has been added successfully.`,
+        });
+      }
     } catch (error) {
       toast({
         title: "Error",
@@ -299,7 +210,7 @@ export const EnhancedAppProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }
   };
 
-  const importUsers = async (projectIds: string[], emails: string[]): Promise<number> => {
+  const importUsers = async (emails: string[], projectIds: string[]) => {
     try {
       setLoading(true);
       const response = await apiCall('/projects/users/import', {
@@ -315,10 +226,7 @@ export const EnhancedAppProvider: React.FC<{ children: React.ReactNode }> = ({ c
           title: "Import Successful",
           description: `Successfully imported ${response.total_imported} users across ${projectIds.length} projects.`,
         });
-        
-        return response.total_imported;
       }
-      return 0;
     } catch (error) {
       toast({
         title: "Import Failed",
@@ -360,7 +268,7 @@ export const EnhancedAppProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }
   };
 
-  // Campaign management with proper workers and batch size usage
+  // Campaign management
   const loadCampaigns = async () => {
     try {
       const response = await apiCall('/campaigns');
@@ -451,58 +359,28 @@ export const EnhancedAppProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
   const startCampaign = async (campaignId: string) => {
     try {
+      await apiCall(`/campaigns/${campaignId}/start`, { method: 'POST' });
+      
+      // Update campaign status
+      setCampaigns(prev => prev.map(c => 
+        c.id === campaignId 
+          ? { ...c, status: 'running' as const, startedAt: new Date().toISOString() }
+          : c
+      ));
+      
       const campaign = campaigns.find(c => c.id === campaignId);
-      if (!campaign) {
-        throw new Error('Campaign not found');
-      }
-
-      console.log(`Starting campaign with ${campaign.workers} workers and batch size ${campaign.batchSize}`);
-      
-      const response = await apiCall(`/campaigns/${campaignId}/start`, { 
-        method: 'POST',
-        body: JSON.stringify({
-          workers: campaign.workers,
-          batchSize: campaign.batchSize
-        })
-      });
-      
-      if (response.success) {
-        // Update campaign status
-        setCampaigns(prev => prev.map(c => 
-          c.id === campaignId 
-            ? { ...c, status: 'running' as const, startedAt: new Date().toISOString() }
-            : c
-        ));
-        
+      if (campaign) {
         setCurrentCampaign({ ...campaign, status: 'running', startedAt: new Date().toISOString() });
-        
-        // Monitor campaign progress
-        const progressInterval = setInterval(async () => {
-          try {
-            const progressResponse = await apiCall(`/campaigns/${campaignId}`);
-            setCampaigns(prev => prev.map(c => c.id === campaignId ? progressResponse : c));
-            setCurrentCampaign(progressResponse);
-            
-            if (progressResponse.status === 'completed' || progressResponse.status === 'failed') {
-              clearInterval(progressInterval);
-              setCurrentCampaign(null);
-            }
-          } catch (error) {
-            console.error('Failed to update campaign progress:', error);
-            clearInterval(progressInterval);
-          }
-        }, 2000);
-        
-        toast({
-          title: "Campaign Started",
-          description: `Password reset campaign is running with ${campaign.workers} workers and batch size ${campaign.batchSize}.`,
-        });
       }
+      
+      toast({
+        title: "Campaign Started",
+        description: "Password reset campaign is now running across all selected projects.",
+      });
     } catch (error) {
-      console.error('Failed to start campaign:', error);
       toast({
         title: "Error",
-        description: "Failed to start campaign. Please check your backend connection.",
+        description: "Failed to start campaign.",
         variant: "destructive",
       });
       throw error;
@@ -548,121 +426,6 @@ export const EnhancedAppProvider: React.FC<{ children: React.ReactNode }> = ({ c
     return dailyCounts[key]?.sent || 0;
   };
 
-  // Profile management
-  const setActiveProfile = (profileId: string) => {
-    console.log('Setting active profile:', profileId);
-    setActiveProfileState(profileId);
-  };
-
-  const addProfile = (profileData: Omit<Profile, 'id' | 'createdAt'>) => {
-    const newProfile: Profile = {
-      ...profileData,
-      id: Date.now().toString(),
-      createdAt: new Date().toISOString(),
-      projectIds: [],
-    };
-    console.log('Adding new profile:', newProfile);
-    setProfiles(prev => [...prev, newProfile]);
-  };
-
-  const removeProfile = (profileId: string) => {
-    console.log('Removing profile:', profileId);
-    setProfiles(prev => prev.filter(p => p.id !== profileId));
-    // Remove profile from projects
-    setProjects(prev => prev.map(p => 
-      p.profileId === profileId ? { ...p, profileId: undefined } : p
-    ));
-    
-    // If removing active profile, set to first available or undefined
-    if (activeProfile === profileId) {
-      const remainingProfiles = profiles.filter(p => p.id !== profileId);
-      setActiveProfileState(remainingProfiles.length > 0 ? remainingProfiles[0].id : undefined);
-    }
-  };
-
-  const updateProfile = (profileId: string, updates: Partial<Profile>) => {
-    console.log('Updating profile:', profileId, updates);
-    setProfiles(prev => prev.map(p => 
-      p.id === profileId ? { ...p, ...updates } : p
-    ));
-  };
-
-  // Individual user deletion
-  const deleteUser = async (projectId: string, userId: string) => {
-    try {
-      await apiCall(`/projects/${projectId}/users/${userId}`, { method: 'DELETE' });
-      
-      // Update local state immediately
-      setUsers(prev => ({
-        ...prev,
-        [projectId]: (prev[projectId] || []).filter(user => user.uid !== userId)
-      }));
-      
-      toast({
-        title: "User Deleted",
-        description: "User has been deleted successfully.",
-      });
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to delete user.",
-        variant: "destructive",
-      });
-      throw error;
-    }
-  };
-
-  // Lightning campaign with proper configuration
-  const startLightningCampaign = async (campaignId: string) => {
-    try {
-      const campaign = campaigns.find(c => c.id === campaignId);
-      if (!campaign) throw new Error('Campaign not found');
-
-      setIsLightningMode(true);
-      console.log(`Starting lightning campaign with ${campaign.workers} workers and batch size ${campaign.batchSize}`);
-      
-      const lightningService = LightningCampaignService.getInstance();
-      
-      await lightningService.executeLightningCampaign({
-        projectIds: campaign.projectIds,
-        selectedUsers: campaign.selectedUsers,
-        workers: campaign.workers,
-        batchSize: campaign.batchSize,
-        maxConcurrency: 1000, // Maximum parallelism for lightning mode
-      }, (stats) => {
-        // Update campaign progress in real-time
-        setCampaigns(prev => prev.map(c => 
-          c.id === campaignId 
-            ? { 
-                ...c, 
-                processed: stats.sent, 
-                successful: stats.sent, 
-                failed: 0,
-                projectStats: stats.projectStats,
-                status: stats.sent >= Object.values(campaign.selectedUsers).reduce((sum, users) => sum + users.length, 0) 
-                  ? 'completed' as const 
-                  : 'running' as const
-              }
-            : c
-        ));
-      });
-
-      toast({
-        title: "Lightning Campaign Fired! ⚡",
-        description: `All emails fired at maximum speed using ${campaign.workers} workers and batch size ${campaign.batchSize}.`,
-      });
-      
-    } catch (error) {
-      toast({
-        title: "Lightning Campaign Failed",
-        description: error instanceof Error ? error.message : "Failed to execute lightning campaign",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLightningMode(false);
-    }
-  };
-
   const value: EnhancedAppContextType = {
     // Projects
     projects,
@@ -692,21 +455,6 @@ export const EnhancedAppProvider: React.FC<{ children: React.ReactNode }> = ({ c
     // Loading
     loading,
     setLoading,
-    
-    // Profiles
-    profiles,
-    activeProfile,
-    setActiveProfile,
-    addProfile,
-    removeProfile,
-    updateProfile,
-    
-    // Lightning mode
-    startLightningCampaign,
-    isLightningMode,
-    
-    // Individual user deletion
-    deleteUser,
   };
 
   return (
