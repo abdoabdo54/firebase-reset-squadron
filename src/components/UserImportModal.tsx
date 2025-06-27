@@ -163,7 +163,13 @@ export const UserImportModal: React.FC<UserImportModalProps> = ({ isOpen, onClos
                   <Checkbox
                     id={`project-${project.id}`}
                     checked={selectedProjects.includes(project.id)}
-                    onCheckedChange={() => handleProjectToggle(project.id)}
+                    onCheckedChange={(checked) => {
+                      if (checked === true) {
+                        handleProjectToggle(project.id);
+                      } else if (checked === false) {
+                        setSelectedProjects(prev => prev.filter(id => id !== project.id));
+                      }
+                    }}
                     className="border-gray-500"
                   />
                   <Label htmlFor={`project-${project.id}`} className="text-white text-sm cursor-pointer">
@@ -179,7 +185,13 @@ export const UserImportModal: React.FC<UserImportModalProps> = ({ isOpen, onClos
               <Checkbox
                 id="distribute-evenly"
                 checked={distributeEvenly}
-                onCheckedChange={setDistributeEvenly}
+                onCheckedChange={(checked) => {
+                  if (checked === true) {
+                    setDistributeEvenly(true);
+                  } else if (checked === false) {
+                    setDistributeEvenly(false);
+                  }
+                }}
                 className="border-gray-500"
               />
               <Label htmlFor="distribute-evenly" className="text-white text-sm cursor-pointer">

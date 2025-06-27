@@ -58,7 +58,7 @@ interface EnhancedAppContextType {
   // Users
   users: { [projectId: string]: User[] };
   loadUsers: (projectId: string) => Promise<void>;
-  importUsers: (emails: string[], projectIds: string[]) => Promise<void>;
+  importUsers: (projectIds: string[], emails: string[]) => Promise<number>;
   bulkDeleteUsers: (projectIds: string[], userIds?: string[]) => Promise<void>;
   
   // Campaigns
@@ -85,6 +85,7 @@ interface EnhancedAppContextType {
   setActiveProfile: (profileId: string) => void;
   addProfile: (profile: Omit<Profile, 'id' | 'createdAt'>) => void;
   removeProfile: (profileId: string) => void;
+  updateProfile: (profileId: string, updates: Partial<Profile>) => void;
   
   // Lightning mode
   startLightningCampaign: (campaignId: string) => Promise<void>;
@@ -298,7 +299,7 @@ export const EnhancedAppProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }
   };
 
-  const importUsers = async (emails: string[], projectIds: string[]) => {
+  const importUsers = async (projectIds: string[], emails: string[]): Promise<number> => {
     try {
       setLoading(true);
       const response = await apiCall('/projects/users/import', {
@@ -314,7 +315,10 @@ export const EnhancedAppProvider: React.FC<{ children: React.ReactNode }> = ({ c
           title: "Import Successful",
           description: `Successfully imported ${response.total_imported} users across ${projectIds.length} projects.`,
         });
+        
+        return response.total_imported;
       }
+      return 0;
     } catch (error) {
       toast({
         title: "Import Failed",
@@ -576,6 +580,13 @@ export const EnhancedAppProvider: React.FC<{ children: React.ReactNode }> = ({ c
     }
   };
 
+  const updateProfile = (profileId: string, updates: Partial<Profile>) => {
+    console.log('Updating profile:', profileId, updates);
+    setProfiles(prev => prev.map(p => 
+      p.id === profileId ? { ...p, ...updates } : p
+    ));
+  };
+
   // Individual user deletion
   const deleteUser = async (projectId: string, userId: string) => {
     try {
@@ -688,6 +699,7 @@ export const EnhancedAppProvider: React.FC<{ children: React.ReactNode }> = ({ c
     setActiveProfile,
     addProfile,
     removeProfile,
+    updateProfile,
     
     // Lightning mode
     startLightningCampaign,
