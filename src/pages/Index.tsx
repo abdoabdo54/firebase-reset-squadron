@@ -29,20 +29,6 @@ const AppContent = () => {
     }
   }, [profiles, activeProfile, setActiveProfile]);
 
-  // Count projects per profile
-  const getProjectCounts = () => {
-    const counts: { [profileId: string]: number } = {};
-    profiles.forEach(profile => {
-      counts[profile.id] = projects.filter(p => p.profileId === profile.id).length;
-    });
-    return counts;
-  };
-
-  const handleProfilesUpdate = (updatedProfiles: any[]) => {
-    // This will be handled by the context through localStorage
-    // The profiles state will be updated automatically
-  };
-
   const renderPage = () => {
     switch (currentPage) {
       case 'dashboard':
@@ -56,15 +42,7 @@ const AppContent = () => {
       case 'templates':
         return <TemplatesPage />;
       case 'profiles':
-        return (
-          <ProfileManager
-            profiles={profiles}
-            activeProfile={activeProfile}
-            onProfileChange={setActiveProfile}
-            onProfilesUpdate={handleProfilesUpdate}
-            projectCounts={getProjectCounts()}
-          />
-        );
+        return <ProfileManager />;
       default:
         return <EnhancedDashboard />;
     }

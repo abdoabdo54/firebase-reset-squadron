@@ -1,27 +1,30 @@
 
 import { useState } from 'react';
-import { useApp } from '@/contexts/AppContext';
+import { useEnhancedApp } from '@/contexts/EnhancedAppContext';
 import { Upload, Download, FileText, Users, AlertCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { Progress } from '@/components/ui/progress';
 
 interface UserImportModalProps {
-  projectId: string;
+  isOpen: boolean;
   onClose: () => void;
+  availableProjects: any[];
 }
 
-export const UserImportModal: React.FC<UserImportModalProps> = ({ projectId, onClose }) => {
-  const { importUsers, projects } = useApp();
+export const UserImportModal: React.FC<UserImportModalProps> = ({ isOpen, onClose, availableProjects }) => {
+  const { importUsers } = useEnhancedApp();
   const { toast } = useToast();
   const [emails, setEmails] = useState('');
+  const [selectedProject, setSelectedProject] = useState('');
   const [isImporting, setIsImporting] = useState(false);
   const [importProgress, setImportProgress] = useState(0);
 
-  const project = projects.find(p => p.id === projectId);
+  if (!isOpen) return null;
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -40,10 +43,19 @@ export const UserImportModal: React.FC<UserImportModalProps> = ({ projectId, onC
       .split(/[\n,;]/)
       .map(email => email.trim())
       .filter(email => email && email.includes('@'))
-      .filter((email, index, arr) => arr.indexOf(email) === index); // Remove duplicates
+      .filter((email, index, arr) => arr.indexOf(email) === index);
   };
 
   const handleImport = async () => {
+    if (!selectedProject) {
+      toast({
+        title: "No project selected",
+        description: "Please select a project to import users to.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     const emailList = parseEmails(emails);
     
     if (emailList.length === 0) {
@@ -59,12 +71,11 @@ export const UserImportModal: React.FC<UserImportModalProps> = ({ projectId, onC
     setImportProgress(0);
 
     try {
-      // Simulate progress updates
       const progressInterval = setInterval(() => {
         setImportProgress(prev => Math.min(prev + 10, 90));
       }, 200);
 
-      const imported = await importUsers(projectId, emailList);
+      const imported = await importUsers(selectedProject, emailList);
       
       clearInterval(progressInterval);
       setImportProgress(100);
@@ -76,6 +87,8 @@ export const UserImportModal: React.FC<UserImportModalProps> = ({ projectId, onC
       
       setTimeout(() => {
         onClose();
+        setEmails('');
+        setSelectedProject('');
       }, 1000);
       
     } catch (error) {
@@ -98,10 +111,26 @@ export const UserImportModal: React.FC<UserImportModalProps> = ({ projectId, onC
         <CardHeader>
           <CardTitle className="text-white flex items-center gap-2">
             <Upload className="w-5 h-5" />
-            Import Users to {project?.name}
+            Import Users
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-6">
+          <div>
+            <Label className="text-gray-300">Select Project</Label>
+            <Select value={selectedProject} onValueChange={setSelectedProject}>
+              <SelectTrigger className="bg-gray-700 border-gray-600 text-white">
+                <SelectValue placeholder="Choose a project" />
+              </SelectTrigger>
+              <SelectContent className="bg-gray-700 border-gray-600">
+                {availableProjects.map((project) => (
+                  <SelectItem key={project.id} value={project.id} className="text-white hover:bg-gray-600">
+                    {project.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
           <div>
             <Label className="text-gray-300">Upload CSV/TXT File</Label>
             <div className="mt-2">
@@ -184,7 +213,7 @@ export const UserImportModal: React.FC<UserImportModalProps> = ({ projectId, onC
           <div className="flex gap-2">
             <Button
               onClick={handleImport}
-              disabled={emailList.length === 0 || isImporting}
+              disabled={emailList.length === 0 || isImporting || !selectedProject}
               className="bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800"
             >
               {isImporting ? (
