@@ -8,6 +8,8 @@ import { EnhancedUsersPage } from '@/components/EnhancedUsersPage';
 import { EnhancedCampaignsPage } from '@/components/EnhancedCampaignsPage';
 import { TemplatesPage } from '@/components/TemplatesPage';
 import { ProfileManager } from '@/components/ProfileManager';
+import { AIManagement } from '@/components/AIManagement';
+import { TestCampaign } from '@/components/TestCampaign';
 import { useEnhancedApp } from '@/contexts/EnhancedAppContext';
 import { Toaster } from '@/components/ui/toaster';
 
@@ -43,6 +45,10 @@ const AppContent = () => {
         return <TemplatesPage />;
       case 'profiles':
         return <ProfileManager />;
+      case 'ai':
+        return <AIManagement />;
+      case 'test':
+        return <TestCampaign />;
       default:
         return <EnhancedDashboard />;
     }
@@ -57,6 +63,11 @@ const AppContent = () => {
         activeProfile={activeProfile}
         onProfileChange={setActiveProfile}
         onAddProfile={addProfile}
+        onRemoveProfile={removeProfile}
+        projectCounts={profiles.reduce((acc, profile) => {
+          acc[profile.id] = projects.filter(p => p.profileId === profile.id).length;
+          return acc;
+        }, {} as { [profileId: string]: number })}
       />
       <main className="flex-1 overflow-auto">
         {renderPage()}

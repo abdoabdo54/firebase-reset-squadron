@@ -55,6 +55,13 @@ export const EnhancedCampaignsPage = () => {
   const [workers, setWorkers] = useState(5);
   const [loadingUsers, setLoadingUsers] = useState<{[key: string]: boolean}>({});
 
+  // Initialize with active profile
+  useEffect(() => {
+    if (activeProfile && !selectedProfile) {
+      setSelectedProfile(activeProfile);
+    }
+  }, [activeProfile, selectedProfile]);
+
   // Filter projects by selected profile
   const profileProjects = selectedProfile 
     ? projects.filter(p => p.profileId === selectedProfile && p.status === 'active')
@@ -63,13 +70,21 @@ export const EnhancedCampaignsPage = () => {
   // Load users when projects are selected
   useEffect(() => {
     const loadProjectUsers = async () => {
+      console.log('Loading users for selected projects:', selectedProjects);
       for (const projectId of selectedProjects) {
         if (!users[projectId] && !loadingUsers[projectId]) {
+          console.log(`Loading users for project ID: ${projectId}`);
           setLoadingUsers(prev => ({ ...prev, [projectId]: true }));
           try {
             await loadUsers(projectId);
+            console.log(`Successfully loaded users for project ID: ${projectId}`);
           } catch (error) {
             console.error(`Failed to load users for project ${projectId}:`, error);
+            toast({
+              title: "Failed to load users",
+              description: `Could not load users for project. Please check your backend connection.`,
+              variant: "destructive",
+            });
           } finally {
             setLoadingUsers(prev => ({ ...prev, [projectId]: false }));
           }
@@ -80,7 +95,7 @@ export const EnhancedCampaignsPage = () => {
     if (selectedProjects.length > 0) {
       loadProjectUsers();
     }
-  }, [selectedProjects, loadUsers]);
+  }, [selectedProjects, loadUsers, users, loadingUsers, toast]);
 
   const handleProfileChange = (profileId: string) => {
     setSelectedProfile(profileId);
@@ -417,6 +432,7 @@ export const EnhancedCampaignsPage = () => {
                     const project = projects.find(p => p.id === projectId);
                     const projectUsers = users[projectId] || [];
                     const selectedCount = selectedUsers[projectId]?.length || 0;
+                    const isLoading = loadingUsers[projectId];
                     
                     return (
                       <div key={projectId} className="bg-gray-700 rounded-lg p-3">
@@ -426,16 +442,17 @@ export const EnhancedCampaignsPage = () => {
                             size="sm"
                             variant="outline"
                             onClick={() => handleSelectAllUsers(projectId)}
+                            disabled={isLoading}
                             className="text-xs border-gray-500 text-gray-300 hover:bg-gray-600"
                           >
                             {selectedCount === projectUsers.length ? 'Deselect All' : 'Select All'}
                           </Button>
                         </div>
                         <div className="text-sm text-gray-400 mb-2">
-                          {selectedCount} of {projectUsers.length} users selected
+                          {isLoading ? 'Loading users...' : `${selectedCount} of ${projectUsers.length} users selected`}
                         </div>
                         
-                        {loadingUsers[projectId] ? (
+                        {isLoading ? (
                           <div className="flex items-center justify-center py-4">
                             <div className="animate-spin w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full mr-2" />
                             <span className="text-gray-400">Loading users...</span>

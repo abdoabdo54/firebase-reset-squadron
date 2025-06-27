@@ -1,7 +1,7 @@
 
 import { useState, useEffect } from 'react';
 import { useEnhancedApp } from '@/contexts/EnhancedAppContext';
-import { Users, Upload, Trash2, Search, Filter, UserX, RefreshCw } from 'lucide-react';
+import { Users, Upload, Trash2, Search, RefreshCw, UserX } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -37,16 +37,24 @@ export const EnhancedUsersPage = () => {
 
   const activeProfileName = profiles.find(p => p.id === activeProfile)?.name || 'All Projects';
 
-  // Load users for all active projects on mount
+  // Load users for all active projects on mount and when activeProjects changes
   useEffect(() => {
     const loadAllUsers = async () => {
+      console.log('Loading users for active projects:', activeProjects);
       for (const project of activeProjects) {
-        if (!users[project.id]) {
+        if (!users[project.id] && !loadingUsers[project.id]) {
+          console.log(`Loading users for project: ${project.name} (${project.id})`);
           setLoadingUsers(prev => ({ ...prev, [project.id]: true }));
           try {
             await loadUsers(project.id);
+            console.log(`Successfully loaded users for project: ${project.name}`);
           } catch (error) {
             console.error(`Failed to load users for project ${project.name}:`, error);
+            toast({
+              title: "Failed to load users",
+              description: `Could not load users for project ${project.name}. Please check your backend connection.`,
+              variant: "destructive",
+            });
           } finally {
             setLoadingUsers(prev => ({ ...prev, [project.id]: false }));
           }
@@ -57,7 +65,7 @@ export const EnhancedUsersPage = () => {
     if (activeProjects.length > 0) {
       loadAllUsers();
     }
-  }, [activeProjects, loadUsers]);
+  }, [activeProjects, loadUsers, users, loadingUsers, toast]);
 
   const handleRefreshUsers = async (projectId: string) => {
     setLoadingUsers(prev => ({ ...prev, [projectId]: true }));
@@ -236,15 +244,26 @@ export const EnhancedUsersPage = () => {
                 Users ({filteredUsers.length})
               </span>
               <div className="flex gap-2">
-                {activeProjects.map(project => (
-                  <Badge key={project.id} className="bg-blue-500/20 text-blue-400">
-                    {project.name}: {users[project.id]?.length || 0}
-                  </Badge>
-                ))}
+                {activeProjects.map(project => {
+                  const userCount = users[project.id]?.length || 0;
+                  const isLoading = loadingUsers[project.id];
+                  return (
+                    <Badge key={project.id} className="bg-blue-500/20 text-blue-400">
+                      {project.name}: {isLoading ? '...' : userCount}
+                    </Badge>
+                  );
+                })}
               </div>
             </CardTitle>
           </CardHeader>
           <CardContent>
+            {Object.values(loadingUsers).some(loading => loading) && (
+              <div className="flex items-center justify-center py-4 mb-4">
+                <div className="animate-spin w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full mr-2" />
+                <span className="text-gray-400">Loading users...</span>
+              </div>
+            )}
+            
             {filteredUsers.length > 0 ? (
               <div className="space-y-4">
                 <div className="max-h-96 overflow-y-auto">
@@ -301,7 +320,9 @@ export const EnhancedUsersPage = () => {
             ) : (
               <div className="text-center py-8">
                 <Users className="w-12 h-12 text-gray-500 mx-auto mb-4" />
-                <h3 className="text-lg font-semibold text-white mb-2">No Users Found</h3>
+                <h3 className="text-lg font-semibold text-white mb-2">
+                  {Object.values(loadingUsers).some(loading => loading) ? 'Loading Users...' : 'No Users Found'}
+                </h3>
                 <p className="text-gray-400">
                   {searchTerm ? 'No users match your search criteria.' : 'No users found in the selected projects.'}
                 </p>
@@ -309,14 +330,6 @@ export const EnhancedUsersPage = () => {
             )}
           </CardContent>
         </Card>
-      )}
-
-      {/* Loading states */}
-      {Object.entries(loadingUsers).some(([_, loading]) => loading) && (
-        <div className="flex items-center justify-center py-4">
-          <div className="animate-spin w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full mr-2" />
-          <span className="text-gray-400">Loading users...</span>
-        </div>
       )}
 
       <UserImportModal
